@@ -11,7 +11,6 @@ import pytest
 @pytest.mark.parametrize('n', [1, 2, 3])
 def test_uniform_knots(n):
     """Check that the number of knots satisfies the relations |k| = |n| + 1."""
-    print(n)
     k = bconv.splines.uniform_knots(n)
     assert np.mean(k) == 0
     assert len(k) == n + 1
