@@ -7,17 +7,21 @@ import torch
 
 def _bconv_impl(x: torch.Tensor, cp: torch.Tensor, cx: torch.Tensor,
                 s: float, n: int) -> torch.Tensor:
-    """Compute a bspline separable convolution.
-
-    In this implementation
-    """
+    """Compute a bspline separable convolution."""
     pass
 
 
-def crop(x: torch.Tensor, crop: List[Tuple[int, int]]):
+def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]):
     """Crop the tensor using an array of values.
 
     Opposite operation of pad.
+    Args:
+        x: Input tensor.
+        crop: Tuple of crop values.
+
+    Returns:
+        Cropped tensor.
+
     """
     assert len(crop) % 2 == 0
     crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)]
@@ -40,8 +44,15 @@ def translate(x: torch.Tensor, shift: Tuple[int, ...],
               mode='constant', value=0):
     """Translate the input.
 
-    - shift: Represents the shift values for each spatial axis.
-    - *args, **kwargs:
+    Args:
+        x: Input tensor
+        shift: Represents the shift values for each spatial axis.
+        mode: Same argument as torch.nn.functional.pad
+        value: Same as above.
+
+    Returns:
+        Translated tensor.
+
     """
     assert len(shift) == len(x.shape) - 2
 
