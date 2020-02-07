@@ -11,6 +11,20 @@ def _bconv_impl(x: torch.Tensor, cp: torch.Tensor, cx: torch.Tensor,
     pass
 
 
+def _crop_impl(x: torch.Tensor, crop: List[Tuple[int, ...]]):
+    # Construct the bounds and padding list of tuples
+    slices = [...]
+    for pl, pr in crop:
+        pl = pl if pl else None
+        pr = pr if pr else None
+        slices.append(slice(pl, -pr))
+
+    slices = tuple(slices)
+
+    # Apply the crop and return
+    return x[slices]
+
+
 def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]):
     """Crop the tensor using an array of values.
 
@@ -27,35 +41,12 @@ def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]):
     crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)]
     assert len(crop) == len(x.shape) - 2
 
-    # Construct the bounds and padding list of tuples
-    slices = [...]
-    for l, r in crop:
-        l = l if l else None
-        r = r if r else None
-        slices.append(slice(l, -r))
-
-    slices = tuple(reversed(slices))
-
-    # Apply the crop and return
-    return x[slices]
+    # Call the actual implementation
+    return _crop_impl(x, crop)
 
 
-def translate(x: torch.Tensor, shift: Tuple[int, ...],
-              mode='constant', value=0):
-    """Translate the input.
-
-    Args:
-        x: Input tensor
-        shift: Represents the shift values for each spatial axis.
-        mode: Same argument as torch.nn.functional.pad
-        value: Same as above.
-
-    Returns:
-        Translated tensor.
-
-    """
-    assert len(shift) == len(x.shape) - 2
-
+def _translate_impl(x: torch.Tensor, shift: Tuple[int, ...],
+                    mode='constant', value=0) -> torch.Tensor:
     # Construct the bounds and padding list of tuples
     paddings = []
     slices = [...]
@@ -68,23 +59,40 @@ def translate(x: torch.Tensor, shift: Tuple[int, ...],
         else:
             paddings.append(0)
             paddings.append(shift)
-            slices.insert(1,slice(shift, None))
+            slices.insert(1, slice(shift, None))
 
     slices = tuple(slices)
     y = torch.nn.functional.pad(x, paddings, mode=mode, value=value)
+
     # Apply the crop and return
     return y[slices]
 
 
-def _cropped_translate_impl(x: torch.Tensor, shift: Tuple[int, ...],
-                            crop: List[Tuple[int, int]], mode, value):
-    y = translate(x, shift, mode, value)
-    return crop(y, crop)
+def translate(x: torch.Tensor, shift: Tuple[int, ...],
+              mode='constant', value=0) -> torch.Tensor:
+    """Translate the input.
+
+    Args:
+        x: Input tensor
+        shift: Represents the shift values for each spatial axis.
+        mode: Same argument as torch.nn.functional.pad
+        value: Same as above.
+
+    Returns:
+        Translated tensor.
+
+    """
+    # Do some basic checks
+    assert len(shift) == len(x.shape) - 2
+
+    # Call the actual implementation
+    return _translate_impl(x, shift, mode, value)
 
 
 def cropped_translate(x: torch.Tensor, shift: torch.Tensor,
                       crop: Union[torch.Tensor, int],
-                      mode='constant', value=0):
+                      mode='constant', value=0) -> torch.Tensor:
     """Apply a translation and crop the result."""
     crop = crop if not isinstance(crop, int) else [(crop. crop)] * len(shift)
-    return _cropped_translate_impl(x, shift, crop, mode, value)
+    y = translate(x, shift, mode, value)
+    return crop(y, crop)

@@ -1,7 +1,7 @@
 """Test the nn.functional module."""
 
 from bconv.nn.functional import translate
-#from bconv.nn.functional import cropped_translate
+from bconv.nn.functional import crop
 
 import torch
 
@@ -42,4 +42,21 @@ def test_translate_simple():
             (2.0, 3.0, 0.0, 3.0, 2.0),
             (5.0, 6.0, 0.0, 6.0, 5.0),
             (8.0, 9.0, 0.0, 9.0, 8.0),
+        ))[None, None, :])
+
+
+def test_crop_simple():
+    """Check that cropping along the two axes gives the expected result."""
+    tt_input = torch.tensor((
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 2.0, 3.0, 0.0),
+        (0.0, 4.0, 5.0, 6.0, 0.0),
+        (0.0, 7.0, 8.0, 9.0, 0.0),
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+    ))[None, None, :]
+
+    assert crop(tt_input, (1, 2, 2, 1)) \
+        .equal(torch.tensor((
+            (2.0, 3.0),
+            (5.0, 6.0),
         ))[None, None, :])
