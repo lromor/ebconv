@@ -1,7 +1,7 @@
 """Test of the UniforBSPlineConv layer."""
 
-import bconv
-from bconv.splines import BSplineBasisFunction
+import ebconv
+from ebconv.splines import BSplineBasisFunction
 
 import numpy as np
 
@@ -11,7 +11,7 @@ import pytest
 @pytest.mark.parametrize('n', [1, 2, 3])
 def test_uniform_knots(n):
     """Check that the number of knots satisfies the relations |k| = |n| + 1."""
-    k = bconv.splines.uniform_knots(n)
+    k = ebconv.splines.uniform_knots(n)
     assert np.mean(k) == 0
     assert len(k) == n + 1
 
@@ -35,7 +35,7 @@ def test_bspline(n, s, epsilon):
 
     # Check that we can build n + 1 from n using convolution.
     yprev = bspline_prev(x)
-    square = bconv.splines.square_signal(x / s)
+    square = ebconv.splines.square_signal(x / s)
     yconv = np.convolve(yprev, square, mode='same') * step / s
     yrec = bspline_next(x)
     assert np.allclose(yconv, yrec, atol=epsilon)

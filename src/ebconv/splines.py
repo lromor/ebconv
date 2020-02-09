@@ -81,6 +81,10 @@ class BSplineBasisFunction():
         """Sample the basis function."""
         return np.nan_to_num(self._b(x))
 
+    def get_support_interval(self):
+        """Return the non zero interval of the function."""
+        return self._knots[0], self._knots[-1]
+
     @classmethod
     def create_cardinal(cls, n: int, s: int) -> T:
         """Return a cardinal bspline instance.

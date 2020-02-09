@@ -1,7 +1,7 @@
 """Test the nn.functional module."""
 
-from bconv.nn.functional import translate
-from bconv.nn.functional import crop
+from ebconv.nn.functional import crop
+from ebconv.nn.functional import translate
 
 import torch
 
