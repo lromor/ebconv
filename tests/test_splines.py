@@ -8,7 +8,10 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.parametrize('n', [1, 2, 3])
+TEST_SPLINE_ORDERS = [3, 5, 11]
+
+
+@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
 def test_uniform_knots(n):
     """Check that the number of knots satisfies the relations |k| = |n| + 1."""
     k = ebconv.splines.uniform_knots(n)
@@ -21,7 +24,7 @@ def test_uniform_knots(n):
 
 @pytest.mark.parametrize('epsilon', [1e-2])
 @pytest.mark.parametrize('s', [0.1, 1, 10])
-@pytest.mark.parametrize('n', list(range(1, 10)))
+@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
 def test_bspline(n, s, epsilon):
     """Match values with scipy."""
     bspline_prev = BSplineBasis.create_cardinal(n, s)
@@ -41,9 +44,9 @@ def test_bspline(n, s, epsilon):
     assert np.allclose(yconv, yrec, atol=epsilon)
 
 
-@pytest.mark.parametrize('shape', [(10,), (100,), (3, 3), (5, 10, 15)])
-@pytest.mark.parametrize('n', [2, 5, 10])
-def test_sample(n, shape):
+@pytest.mark.parametrize('shape', [(5,), (100,), (3, 3), (5, 10, 15)])
+@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
+def test_bspline_sample(n, shape):
     """Sampling should return a symmetric array of non-zero values."""
     b = BSplineBasis.create_cardinal(n)
     y = b.sample(shape)
@@ -56,3 +59,16 @@ def test_sample(n, shape):
 
     # Only the support should be sampled
     assert (y != 0).all()
+
+    # Test sshift
+    shift = np.zeros(len(shape))
+    with pytest.raises(ValueError):
+        b.sample(shape, sshift=shift + 0.5)
+
+    shift_l = shift + 0.45
+    shift_r = shift - 0.45
+    yl = b.sample(shape, sshift=shift_l)
+    yr = b.sample(shape, sshift=shift_r)
+
+    # Check symmetry
+    assert np.allclose(yl, np.flip(yr))

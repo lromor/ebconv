@@ -4,8 +4,7 @@ This module contains spline utility functions and
 classes.
 """
 
-from collections.abc import Iterable
-from typing import Iterable as TIterable
+from typing import Iterable as Iterable
 from typing import TypeVar, Union
 
 import numpy as np
@@ -87,17 +86,38 @@ class BSplineBasis():
         """Return the non zero interval of the function."""
         return self._knots[0], self._knots[-1]
 
-    def sample(self, shape: Union[TIterable[int], int]):
-        """Return the basis support using width samples."""
-        if not isinstance(shape, Iterable):
+    def sample(self, shape: Union[Iterable[int], int],
+               sshift: Union[Iterable[float], float] = 0.0):
+        """Return the basis support using width samples.
+
+        sshift is a list of float values between (-0.5, 0.5) to tweak
+        a real centered position of the bsplines.
+
+        Args:
+            sshift: Float value
+
+        Returns:
+            Sampled kernel.
+
+        """
+        if isinstance(shape, int):
             shape = (shape,)
+
+        if isinstance(sshift, float):
+            sshift = (sshift,)
+            if len(shape) > 1:
+                sshift = sshift * len(shape)
+        assert np.array(shape).shape == np.array(sshift).shape
+
+        if not (np.abs(sshift) < 0.5).all():
+            raise ValueError('sshift should be between (-0.5, 0.5)')
 
         lb, ub = self.get_support_interval()
         out = np.array((1,))
 
-        for s in shape:
+        for s, shift in zip(shape, sshift):
             x, step = np.linspace(lb, ub, s, endpoint=False, retstep=True)
-            xout = self(x + step / 2)
+            xout = self(x + step / 2 - shift)
             out = np.tensordot(out, xout, axes=0)
         return out
 
