@@ -1,7 +1,7 @@
 """Test of the UniforBSPlineConv layer."""
 
 import ebconv
-from ebconv.splines import BSplineBasisFunction
+from ebconv.splines import BSplineBasis
 
 import numpy as np
 
@@ -24,8 +24,8 @@ def test_uniform_knots(n):
 @pytest.mark.parametrize('n', list(range(1, 10)))
 def test_bspline(n, s, epsilon):
     """Match values with scipy."""
-    bspline_prev = BSplineBasisFunction.create_cardinal(n, s)
-    bspline_next = BSplineBasisFunction.create_cardinal(n + 1, s)
+    bspline_prev = BSplineBasis.create_cardinal(n, s)
+    bspline_next = BSplineBasis.create_cardinal(n + 1, s)
 
     k_next = bspline_next.get_knots()
     # Create the domain.
@@ -39,3 +39,20 @@ def test_bspline(n, s, epsilon):
     yconv = np.convolve(yprev, square, mode='same') * step / s
     yrec = bspline_next(x)
     assert np.allclose(yconv, yrec, atol=epsilon)
+
+
+@pytest.mark.parametrize('shape', [(10,), (100,), (3, 3), (5, 10, 15)])
+@pytest.mark.parametrize('n', [2, 5, 10])
+def test_sample(n, shape):
+    """Sampling should return a symmetric array of non-zero values."""
+    b = BSplineBasis.create_cardinal(n)
+    y = b.sample(shape)
+
+    # Check the size
+    assert y.squeeze().shape == shape
+
+    # Check symmetry
+    assert np.allclose(y, np.flip(y))
+
+    # Only the support should be sampled
+    assert (y != 0).all()

@@ -51,7 +51,7 @@ setup(
     install_requires=['torch', 'numpy', 'scipy'],
     extras_require={
         'dev': ['check-manifest'],
-        'test': ['coverage', 'pytest'],
+        'test': ['pytest', 'pytest-cov'],
     },
     project_urls={
         'Bug Reports': 'https://github.com/lromor/ebconv/issues',

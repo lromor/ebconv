@@ -4,7 +4,9 @@ This module contains spline utility functions and
 classes.
 """
 
-from typing import TypeVar
+from collections.abc import Iterable
+from typing import Iterable as TIterable
+from typing import TypeVar, Union
 
 import numpy as np
 
@@ -35,10 +37,10 @@ def square_signal(x, width=1):
     return np.heaviside(x + width / 2, 1) * np.heaviside(-x + width / 2, 1)
 
 
-T = TypeVar('T', bound='BSplineBasisFunction')
+_TBSplineBasis = TypeVar('TBSplineBasis', bound='BSplineBasis')
 
 
-class BSplineBasisFunction():
+class BSplineBasis():
     """Implementation of a Univariate BSpline function."""
 
     def __init__(self, knots: np.ndarray) -> None:
@@ -85,8 +87,22 @@ class BSplineBasisFunction():
         """Return the non zero interval of the function."""
         return self._knots[0], self._knots[-1]
 
+    def sample(self, shape: Union[TIterable[int], int]):
+        """Return the basis support using width samples."""
+        if not isinstance(shape, Iterable):
+            shape = (shape,)
+
+        lb, ub = self.get_support_interval()
+        out = np.array((1,))
+
+        for s in shape:
+            x, step = np.linspace(lb, ub, s, endpoint=False, retstep=True)
+            xout = self(x + step / 2)
+            out = np.tensordot(out, xout, axes=0)
+        return out
+
     @classmethod
-    def create_cardinal(cls, n: int, s: int) -> T:
+    def create_cardinal(cls, n: int, s: int = 1.0) -> _TBSplineBasis:
         """Return a cardinal bspline instance.
 
         Args:

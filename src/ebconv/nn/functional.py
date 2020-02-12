@@ -25,7 +25,7 @@ def _crop_impl(x: torch.Tensor, crop: List[Tuple[int, ...]]):
     return x[slices]
 
 
-def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]):
+def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
     """Crop the tensor using an array of values.
 
     Opposite operation of pad.
@@ -96,3 +96,4 @@ def cropped_translate(x: torch.Tensor, shift: torch.Tensor,
     crop = crop if not isinstance(crop, int) else [(crop. crop)] * len(shift)
     y = translate(x, shift, mode, value)
     return crop(y, crop)
+
