@@ -1,7 +1,7 @@
 """Test of the UniforBSPlineConv layer."""
 
 import ebconv
-from ebconv.splines import BSplineBasis
+from ebconv.splines import BSpline
 
 import numpy as np
 
@@ -23,14 +23,15 @@ def test_uniform_knots(n):
 
 
 @pytest.mark.parametrize('epsilon', [1e-2])
+@pytest.mark.parametrize('c', [-5.0, -0.3, 0.3, 7])
 @pytest.mark.parametrize('s', [0.1, 1, 10])
 @pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
-def test_bspline(n, s, epsilon):
+def test_bspline(n, s, c, epsilon):
     """Match values with scipy."""
-    bspline_prev = BSplineBasis.create_cardinal(n, s)
-    bspline_next = BSplineBasis.create_cardinal(n + 1, s)
-
+    bspline_prev = BSpline.create_cardinal(center=c, scaling=s, n=n)
+    bspline_next = BSpline.create_cardinal(center=c, scaling=s, n=n + 1)
     k_next = bspline_next.get_knots()
+
     # Create the domain.
     lb, ub = k_next[0], k_next[-1]
     x, step = np.linspace(
@@ -38,37 +39,7 @@ def test_bspline(n, s, epsilon):
 
     # Check that we can build n + 1 from n using convolution.
     yprev = bspline_prev(x)
-    square = ebconv.splines.square_signal(x / s)
+    square = ebconv.splines.square_signal((x - c) / s)
     yconv = np.convolve(yprev, square, mode='same') * step / s
     yrec = bspline_next(x)
     assert np.allclose(yconv, yrec, atol=epsilon)
-
-
-@pytest.mark.parametrize('shape', [(5,), (100,), (3, 3), (5, 10, 15)])
-@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
-def test_bspline_sample(n, shape):
-    """Sampling should return a symmetric array of non-zero values."""
-    b = BSplineBasis.create_cardinal(n)
-    y = b.sample(shape)
-
-    # Check the size
-    assert y.squeeze().shape == shape
-
-    # Check symmetry
-    assert np.allclose(y, np.flip(y))
-
-    # Only the support should be sampled
-    assert (y != 0).all()
-
-    # Test sshift
-    shift = np.zeros(len(shape))
-    with pytest.raises(ValueError):
-        b.sample(shape, sshift=shift + 0.5)
-
-    shift_l = shift + 0.45
-    shift_r = shift - 0.45
-    yl = b.sample(shape, sshift=shift_l)
-    yr = b.sample(shape, sshift=shift_r)
-
-    # Check symmetry
-    assert np.allclose(yl, np.flip(yr))
