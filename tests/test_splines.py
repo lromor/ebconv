@@ -1,4 +1,4 @@
-"""Test of the UniforBSPlineConv layer."""
+"""Test of the bsplines module."""
 
 import ebconv
 from ebconv.splines import BSpline

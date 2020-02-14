@@ -1,6 +1,6 @@
 """Tests of the ebconv.utils module."""
 
-from ebconv.utils import round_modf
+from ebconv.utils import round_modf, tensordot
 
 import numpy as np
 
@@ -22,3 +22,23 @@ def test_round_modf(x, expected):
     assert df + di == x
     assert np.isclose(df, r_df)
     assert di == r_di
+
+
+def test_tendordot():
+    """Value of tensor product of the callables.
+
+    We should have the same values as manually sampling the functions
+    separately and then performing np.tensordot().
+    """
+    list_fn = [np.cos, np.sin]
+    x = np.linspace(-np.pi, np.pi)
+    y = np.linspace(-np.pi, np.pi)
+
+    xx, yy = np.meshgrid(x, y)
+    fn = tensordot(list_fn)
+    zf = fn(xx, yy)
+
+    zx = np.cos(x)
+    zy = np.sin(y)
+    zn = np.tensordot(zx, zy, axes=0)
+    assert np.allclose(zf, zn)
