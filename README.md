@@ -2,7 +2,7 @@
 
 [1]: https://arxiv.org/abs/1909.12057
 
-# EBCONV ✵
+# EBC✵NV 
 
 Equivariant B-splines CONVolutions.
 
