@@ -23,13 +23,13 @@ def test_uniform_knots(n):
 
 
 @pytest.mark.parametrize('epsilon', [1e-2])
-@pytest.mark.parametrize('c', [-5.0, -0.3, 0.3, 7])
+@pytest.mark.parametrize('k', TEST_SPLINE_ORDERS)
 @pytest.mark.parametrize('s', [0.1, 1, 10])
-@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
-def test_bspline(n, s, c, epsilon):
+@pytest.mark.parametrize('c', [-5.0, -0.3, 0.3, 7])
+def test_cardinal_bspline(c, s, k, epsilon):
     """Match values with scipy."""
-    bspline_prev = BSpline.create_cardinal(center=c, scaling=s, n=n)
-    bspline_next = BSpline.create_cardinal(center=c, scaling=s, n=n + 1)
+    bspline_prev = BSpline.create_cardinal(c, s, k)
+    bspline_next = BSpline.create_cardinal(c, s, k + 1)
     k_next = bspline_next.get_knots()
 
     # Create the domain.

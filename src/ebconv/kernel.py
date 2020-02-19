@@ -23,7 +23,7 @@ def create_random_centers(bounds: Iterable[Tuple[float, ...]],
     return c
 
 
-class BSplineKernel:
+class CardinalBSplineKernel:
     """Defines a n-dimensional, cardinal, BSplines kernel bases function.
 
     This class should behave as close as possible as a generic, cardinal
@@ -36,6 +36,11 @@ class BSplineKernel:
         self._s = s
         self._k = k
         self._w = w
+        splines = []
+        for p in zip(self._c, self._s, self._k):
+            splines.append(
+                tuple(BSpline.create_cardinal(*ap) for ap in zip(*p)))
+        self._splines = tuple(splines)
 
     @property
     def c(self):
@@ -52,53 +57,24 @@ class BSplineKernel:
         """Return read only var."""
         return self._k
 
-    def _get_w(self):
-        """Return the private member w."""
-        return self._w
-
-    def _set_w(self, w):
-        """Enforce that w must have the same shape as before."""
-        if w.shape != self._w.shape:
-            raise ValueError('New weights vector has wrong shape.')
-        self._w = w
-
-    w = property(_get_w, _set_w)
-
-    def __call__(self, *args, **kwargs):
-        """Sample in the provided domain."""
-        return self._sample(*args, **kwargs)
-
     def _sample(self, *args, **kwargs):
-        tb = self.sample_basis(*args, **kwargs)
-        # tb.T @ self.w.T
-        # To change from matrix coordinates
-        # that is, positive axes in the lower right
-        # quadrant to cartesian (positive axes upper right)
-        # we need to transpose.
-        return np.tensordot(self._w, tb, axes=1).T
-
-    def sample_basis(self, *args, **kwargs):
         """Evaluate the different bsplines in the domain provided by *args.
 
         Returns a tensor with the sampled function for each of the centers.
         """
         bases = []
-        for p in zip(self._c, self._s, self._k):
-            splines = [BSpline.create_cardinal(*ap) for ap in zip(*p)]
-            b = tensordot(splines)
+        for dsplines in self._splines:
+            b = tensordot(dsplines)
             bases.append(b(*args, **kwargs))
         return np.stack(bases)
 
-    def sample_from_interval(*args, **kwargs):
-        """Sample the kernel from in a given dd interval.
-
-        This method should simply take care of generating the meshgrid.
-        """
-        raise NotImplementedError
+    def __call__(self, *args, **kwargs):
+        """Sample in the provided domain."""
+        return self._sample(*args, **kwargs)
 
     def copy(self):
-        """Return a new identical instance of the kernel."""
-        return BSplineKernel(self._c, self._s, self._k, self._w)
+        """Return a duplicate instance of the kernel."""
+        return CardinalBSplineKernel(self._c, self._s, self._k, self._w)
 
     @classmethod
     def create(cls, c: Iterable[Tuple[float, ...]],

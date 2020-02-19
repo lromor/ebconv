@@ -4,6 +4,7 @@ This module contains spline utility functions and
 classes.
 """
 
+from abc import ABC, abstractmethod
 from typing import TypeVar
 
 import numpy as np
@@ -35,10 +36,10 @@ def square_signal(x, width=1):
     return np.heaviside(x + width / 2, 1) * np.heaviside(-x + width / 2, 1)
 
 
-_TBSpline = TypeVar('TBSpline', bound='BSpline')
+_TBSplineBase = TypeVar('TBSplineBase', bound='BSplineBase')
 
 
-class BSpline():
+class BSplineBase(ABC):
     """Implementation of a Univariate BSpline function."""
 
     def __init__(self, knots: np.ndarray) -> None:
@@ -48,14 +49,10 @@ class BSpline():
             n: Order of the bspline
             s: Distance between knots.
 
-        Returns:
-           Array of knots positions.
-
         """
         self._knots = knots
         self._spacing = np.ediff1d(knots)
         self._is_cardinal = np.isclose(self._spacing[0], self._spacing).all()
-        self._b = _BSpline.basis_element(self._knots, extrapolate=False)
 
     def get_knots(self) -> np.ndarray:
         """Return the knots of the basis."""
@@ -81,24 +78,46 @@ class BSpline():
         """Return the non zero interval of the function."""
         return self._knots[0], self._knots[-1]
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
-        """Sample the basis function."""
-        return np.nan_to_num(self._b(x))
-
     @classmethod
     def create_cardinal(cls,
                         center: float = 0.0,
                         scaling: float = 1.0,
-                        n: float = 3) -> _TBSpline:
+                        order: float = 3) -> _TBSplineBase:
         """Return a cardinal bspline instance.
 
         Args:
             center: Center of the cardinal spline.
             scaling: Distance between the knots.
             n: Order of the spline.
-
         Returns:
-           Array of samples.
+           BSplineBase child instance with uniform knots.
 
         """
-        return cls(uniform_knots(n) * scaling + center)
+        bspline = cls(uniform_knots(order) * scaling + center)
+        assert bspline.is_cardinal()
+        return bspline
+
+    @abstractmethod
+    def _sample(self, x):
+        """Backend to sample the bspline."""
+        pass
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """Sample the basis function."""
+        return self._sample(x)
+
+
+class ScipyBSpline(BSplineBase):
+    """Scipy implementation of a b-spline."""
+
+    def __init__(self, knots: np.ndarray):
+        """Init scipy based bspline implementation."""
+        super().__init__(knots)
+        self._b = _BSpline.basis_element(self._knots, extrapolate=False)
+
+    def _sample(self, x):
+        return np.nan_to_num(self._b(x))
+
+
+# Default implementation
+BSpline = ScipyBSpline

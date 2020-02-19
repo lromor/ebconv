@@ -1,5 +1,6 @@
 """Test the nn.functional module."""
 
+from ebconv.nn.functional import cbsconv
 from ebconv.nn.functional import crop
 from ebconv.nn.functional import translate
 
@@ -9,8 +10,7 @@ import torch
 def test_bconv2d():
     """Test the numerical solution of bspline conv."""
     # Create a sample 2d function as input
-    # f = torch.Tensor(np.random.rand(100, 100))
-    pass
+    tt = torch.rand(800, 600)
 
 
 def test_translate_simple():
