@@ -2,7 +2,7 @@
 
 from typing import List, Tuple, Union
 
-from ebconv.splines import BSpline
+from ebconv.splines import BSplineElement
 from ebconv.utils import conv_output_shape, round_modf
 
 import numpy as np
@@ -127,9 +127,9 @@ def _cbsconv_impl(input_, weights, c, s, k,
     return torch.tensordot(weights, stacked_convs)
 
 
-def cbsconv(input_: torch.Tensor, weights: np.ndarray, c: np.ndarray,
-            s: np.ndarray, k: np.ndarray,
-            kernel_size: Union[Tuple[int, ...], None] = None,
+def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
+            weights: torch.Tensor, c: torch.Tensor,
+            s: torch.Tensor, k: torch.Tensor,
             bias=None, stride=1, padding=0, dilation=1,
             groups=1) -> torch.Tensor:
     """Interface for the cardinal BSplines d-dimensional convolution."""
@@ -139,7 +139,7 @@ def cbsconv(input_: torch.Tensor, weights: np.ndarray, c: np.ndarray,
     if kernel_size is not None:
         raise NotImplementedError('Specifing the kernel size is'
                                   'not yet implemented.')
-    return _cbsconv_impl(input_, weights, c, s, k, bias, stride,
+    return _cbsconv_impl(input_, kernel_size, weights, c, s, k, bias, stride,
                          padding, dilation, groups)
 
 

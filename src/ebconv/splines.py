@@ -4,8 +4,9 @@ This module contains spline utility functions and
 classes.
 """
 
-from abc import ABC, abstractmethod
-from typing import TypeVar
+from typing import Iterable, List, Tuple, TypeVar, Union
+
+from ebconv.utils import tensordot
 
 import numpy as np
 
@@ -22,102 +23,112 @@ def uniform_knots(n: int) -> np.ndarray:
         Array of knots positions.
 
     Raises:
-        RuntimeError: if n < 1
+        RuntimeError: if n < 2
 
     """
-    if n < 1:
-        raise RuntimeError('Knots order n must be >= 1.')
-    knots = np.arange(0, n + 1) - n / 2
+    if n < 0:
+        raise RuntimeError('Knots order n must be >= 0.')
+    knots = np.arange(0, n + 2) - (n + 1) / 2
     return knots
 
 
-def square_signal(x, width=1):
+def square_signal(x: np.ndarray, width=1) -> np.ndarray:
     """Return a centered square signal."""
     return np.heaviside(x + width / 2, 1) * np.heaviside(-x + width / 2, 1)
 
 
-_TBSplineBase = TypeVar('TBSplineBase', bound='BSplineBase')
-
-
-class BSplineBase(ABC):
-    """Implementation of a Univariate BSpline function."""
+class UnivariateBSplineElement():
+    """Define a univariate b-spline element."""
 
     def __init__(self, knots: np.ndarray) -> None:
-        """Initialize a cardinal bspline.
+        """Initialize a uniform b-spline element using knots.
 
         Args:
-            n: Order of the bspline
-            s: Distance between knots.
+            knots: Knots that completely define the basis element.
 
         """
-        self._knots = knots
-        self._spacing = np.ediff1d(knots)
-        self._is_cardinal = np.isclose(self._spacing[0], self._spacing).all()
+        self._b = _BSpline.basis_element(knots, extrapolate=False)
+        self.k = self._b.k
+        self.c = self._b.c
+        self.t = self._b.t
 
-    def get_knots(self) -> np.ndarray:
-        """Return the knots of the basis."""
-        return self._knots
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """Sample the bspline element in the domain."""
+        return np.nan_to_num(self._b(x))
+
+
+_TBSplineElementBase = TypeVar('TBSplineElementBase',
+                               bound='BSplineElementBase')
+
+
+class BSplineElement():
+    """Implementation of a Univariate BSpline function."""
+
+    def __init__(self, knots: Iterable[np.ndarray]) -> None:
+        """Initialize a bspline element.
+
+        Args:
+            knots: List of array of knots.
+
+        """
+        self._univariate_splines = [UnivariateBSplineElement(k) for k in knots]
+        self._b = tensordot(self._univariate_splines)
+
+    def dimensionality(self) -> int:
+        """Return the number of dimensions of the basis element."""
+        return len(self._univariate_spines)
+
+    def knots(self) -> List[np.ndarray]:
+        """Return a list of knots for every dimension."""
+        return [b.t[b.k:-b.k if b.k != 0 else None]
+                for b in self._univariate_splines]
 
     def is_cardinal(self) -> bool:
         """Return true if knots are uniformly spaced."""
-        return self._is_cardinal
+        spacing = tuple(map(np.ediff1d, self.knots()))
+        return np.array(
+            tuple(np.isclose(sp[0], sp).all() for sp in spacing)).all()
 
-    def get_order(self) -> int:
-        """Return the spline order."""
-        return len(self.knots) - 1
+    def get_order(self) -> List[int]:
+        """Return the spline order for every dimension."""
+        return [b.k for b in self._univariate_spines]
 
-    def get_polynomial_order(self) -> int:
-        """Return polynimial order of the basis."""
-        return self.get_order() - 1
-
-    def get_spacing(self) -> np.ndarray:
-        """Return the spacing between knots."""
-        return self._spacing
-
-    def get_support_interval(self):
+    def support_bounds(self) -> np.ndarray:
         """Return the non zero interval of the function."""
-        return self._knots[0], self._knots[-1]
+        return np.array(tuple((k[0], k[-1]) for k in self.knots()))
 
     @classmethod
-    def create_cardinal(cls,
-                        center: float = 0.0,
-                        scaling: float = 1.0,
-                        order: float = 3) -> _TBSplineBase:
+    def create_cardinal(
+            cls, center: Union[Tuple[float, ...], float] = 0.0,
+            scaling: Union[Tuple[float, ...], float] = 1.0,
+            order: Union[Tuple[int, ...], int] = 3) -> _TBSplineElementBase:
         """Return a cardinal bspline instance.
 
         Args:
             center: Center of the cardinal spline.
             scaling: Distance between the knots.
-            n: Order of the spline.
+            n: Order of the spline, 3=cubic.
         Returns:
-           BSplineBase child instance with uniform knots.
+           BSplineElementBase child instance with uniform knots.
 
         """
-        bspline = cls(uniform_knots(order) * scaling + center)
+        if not isinstance(center, Iterable):
+            center = (center,)
+        if not isinstance(scaling, Iterable):
+            scaling = (scaling,)
+        if not isinstance(order, Iterable):
+            order = (order,)
+
+        knots = [uniform_knots(o) * s + c
+                 for o, s, c in zip(order, scaling, center)]
+        bspline = cls(knots)
         assert bspline.is_cardinal()
         return bspline
 
-    @abstractmethod
-    def _sample(self, x):
+    def _sample(self, *args, **kwargs):
         """Backend to sample the bspline."""
-        pass
+        return self._b(*args, **kwargs)
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
+    def __call__(self, *args, **kwargs) -> np.ndarray:
         """Sample the basis function."""
-        return self._sample(x)
-
-
-class ScipyBSpline(BSplineBase):
-    """Scipy implementation of a b-spline."""
-
-    def __init__(self, knots: np.ndarray):
-        """Init scipy based bspline implementation."""
-        super().__init__(knots)
-        self._b = _BSpline.basis_element(self._knots, extrapolate=False)
-
-    def _sample(self, x):
-        return np.nan_to_num(self._b(x))
-
-
-# Default implementation
-BSpline = ScipyBSpline
+        return self._sample(*args, **kwargs)

@@ -1,6 +1,6 @@
 """A collection of math utilities."""
 
-from typing import Tuple, Union
+from typing import Iterable, Tuple, Union
 
 import numpy as np
 

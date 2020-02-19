@@ -1,7 +1,7 @@
 """Test of the bsplines module."""
 
 import ebconv
-from ebconv.splines import BSpline
+from ebconv.splines import BSplineElement
 
 import numpy as np
 
@@ -13,10 +13,10 @@ TEST_SPLINE_ORDERS = [3, 5, 11]
 
 @pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
 def test_uniform_knots(n):
-    """Check that the number of knots satisfies the relations |k| = |n| + 1."""
+    """Check that the number of knots satisfies the relations |k| = |n| + 2."""
     k = ebconv.splines.uniform_knots(n)
     assert np.mean(k) == 0
-    assert len(k) == n + 1
+    assert len(k) == n + 2
 
     spacing = np.ediff1d(k)
     assert (spacing == np.ones_like(spacing)).all()
@@ -26,11 +26,11 @@ def test_uniform_knots(n):
 @pytest.mark.parametrize('k', TEST_SPLINE_ORDERS)
 @pytest.mark.parametrize('s', [0.1, 1, 10])
 @pytest.mark.parametrize('c', [-5.0, -0.3, 0.3, 7])
-def test_cardinal_bspline(c, s, k, epsilon):
+def test_cardinal_bspline1d(c, s, k, epsilon):
     """Match values with scipy."""
-    bspline_prev = BSpline.create_cardinal(c, s, k)
-    bspline_next = BSpline.create_cardinal(c, s, k + 1)
-    k_next = bspline_next.get_knots()
+    bspline_prev = BSplineElement.create_cardinal(c, s, k)
+    bspline_next = BSplineElement.create_cardinal(c, s, k + 1)
+    k_next = bspline_next.knots()[0]
 
     # Create the domain.
     lb, ub = k_next[0], k_next[-1]
