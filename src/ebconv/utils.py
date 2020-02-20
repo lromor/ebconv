@@ -35,22 +35,28 @@ def conv_output_shape(ishape: Tuple[int],
     ishape: N, cin, h, w, d, ...
     wshape: cout, cin / groups, kh, kw, kd, ...
     """
+    # The input shape should be at least batch, iC, x
+    # for a 1d spatial input.
+    assert len(ishape) >= 3
     ispatial_shape = np.array(ishape[2:])
     nspatial_dims = len(ispatial_shape)
 
     kspatial_shape = np.array(wshape[2:])
 
-    if isinstance(stride, int):
+    if not isinstance(stride, Iterable):
         stride = ((stride,) * nspatial_dims)
     stride = np.array(stride)
 
-    if isinstance(padding, int):
+    if not isinstance(padding, Iterable):
         padding = ((padding,) * nspatial_dims)
     padding = np.array(padding)
 
-    if isinstance(dilation, int):
+    if not isinstance(dilation, Iterable):
         dilation = ((dilation,) * nspatial_dims)
     dilation = np.array(dilation)
+
+    assert ispatial_shape.shape == kspatial_shape.shape \
+        == stride.shape == padding.shape == dilation.shape
 
     sd = (ispatial_shape + 2 * padding - dilation * (kspatial_shape - 1) - 1) \
         / stride + 1

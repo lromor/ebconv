@@ -7,28 +7,29 @@ from ebconv.nn.functional import translate
 
 import numpy as np
 
-import torch
-
 import pytest
 
-@pytest.mark.parametrize('k', [4])
-@pytest.mark.parametrize('s', [48])
-@pytest.mark.parametrize('n', [16])
-@pytest.mark.parametrize('k_interval', [(100, -100, -100, 100)])
-@pytest.mark.parametrize('input_size', [(800, 600)])
-def test_bconv2d(input_size, k_interval, n, s, k):
-    """Test the numerical solution of bspline conv."""
-    # Create a sample 2d function as input
-    interval = np.array((100, -100, -100, 100)).reshape(2, 2)
-    c = create_random_centers(interval, n)
-    kb = CardinalBSplineKernel.create(c=c, s=s, k=k)
+import torch
 
-    tt = torch.rand(*input_size)
 
-    # Init random weights
-    tw = torch.rand((3, 1, n))
-    conv = cbsconv(tt, tw, torch.Tensor(kb.c),
-                   torch.Tensor(kb.s), torch.Tensor(kb.k))
+# @pytest.mark.parametrize('k', [4])
+# @pytest.mark.parametrize('s', [48])
+# @pytest.mark.parametrize('n', [16])
+# @pytest.mark.parametrize('k_interval', [(100, -100, -100, 100)])
+# @pytest.mark.parametrize('input_size', [(1, 1, 800, 600)])
+# def test_bconv2d(input_size, k_interval, n, s, k):
+#     """Test the numerical solution of bspline conv."""
+#     # Create a sample 2d function as input
+#     interval = np.array((100, -100, -100, 100)).reshape(2, 2)
+#     c = create_random_centers(interval, n)
+#     kb = CardinalBSplineKernel.create(c=c, s=s, k=k)
+
+#     tt = torch.rand(*input_size)
+
+#     # Init random weights
+#     tw = torch.rand((3, 1, n))
+#     conv = cbsconv(tt, (100, 100), tw, torch.Tensor(kb.c),
+#                    torch.Tensor(kb.s), torch.Tensor(kb.k))
 
 
 def test_translate_simple():

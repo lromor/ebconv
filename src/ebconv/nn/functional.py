@@ -1,7 +1,8 @@
 """Definition of main workhorse functions made for pytorch."""
 
-from typing import List, Tuple, Union
+from typing import Iterable, List, Tuple
 
+from ebconv.kernel import CardinalBSplineKernel
 from ebconv.splines import BSplineElement
 from ebconv.utils import conv_output_shape, round_modf
 
@@ -11,56 +12,67 @@ import torch
 from torch.nn.functional import conv1d
 
 
-def _bsconv_subconv(input_, basis_paramaters, stride, padding, dilation):
+def _bsconv_subconv(input_, basis_parameters, stride, padding, dilation):
     """Convolve a single basis."""
-    axes = np.arange(input_.shape)
+    iC = input_.shape[1]
+    non_spatial_shape = input_.shape[:2]
+    spatial_dims = len(input_.shape[2:])
+    paxes = np.roll(np.arange(2, spatial_dims + 2), 1)
     conv = input_
 
+    # We convolve the separable basis
     for dshift, s, k, dstride, dpadding, ddilation \
-        in zip(*basis_paramaters, stride,
+        in zip(*basis_parameters, stride,
                padding, dilation):
         # Store the original shape of the input tensor.
         initial_shape = conv.shape
-        non_spatial_shape = initial_shape[:3]
 
         # Compute the number of 1d strides
-        strides = np.prod(initial_shape[3:-1])
+        strides = np.prod(initial_shape[2:-1], dtype=int)
 
         # Create the basis function and sample it.
-        spline = BSpline.create_cardinal(dshift, s, k)
+        spline = BSplineElement.create_cardinal(dshift, s, k)
 
         # Sample the support of the spline
-        lb, ub = np.floor(spline.get_support_interval())
-        width = int(ub - lb) + 1
+        lb, ub = spline.support_bounds().squeeze()
         x = np.arange(lb, ub) + 0.5
-        spline_w = torch.Tensor(spline(x)).reshape(1, 1, -1)
+        spline_w = torch.Tensor(spline(x)).reshape(1, -1)
+        spline_w = torch.stack([spline_w for i in range(iC)])
+        width = spline_w.shape[-1]
 
         # Compute the theoretical ddconvolution
         # Perform the 1d convolution
         conv = conv1d(conv.reshape(*non_spatial_shape, -1),
-                      spline_w, dstride, dpadding, ddilation)
+                      spline_w,
+                      stride=dstride,
+                      padding=dpadding,
+                      dilation=ddilation, groups=iC)
 
         # Add at the end extra values to have the right shape
         # to remove the excess of values due to tha fake ddim
         # 1d conv.
-        conv = torch.cat([conv, torch.empty(*non_spatial_shape, 2 * width)])
+        conv = torch.cat([conv, torch.empty(*non_spatial_shape, width - 1)],
+                         dim=-1)
 
         # Remove the excess from the 1d convolution.
         conv = conv.reshape(*non_spatial_shape, strides, -1)
-        conv = conv[..., :-2 * width]
+        conv = conv[..., :-(width - 1)]
         conv = conv.reshape(*initial_shape[:-1], -1)
 
         # Permute to axes to have the one we are dealing with as last.
-        axes = np.roll(axes, 1)
-        conv = conv.permute(0, 1, *axes)
+        conv = conv.permute(0, 1, *paxes)
     return conv
 
 
-def _cbsconv_impl(input_, weights, c, s, k,
-                  bias, stride, padding, dilation, groups):
+def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
+            weights: torch.Tensor, c: np.ndarray,
+            s: np.ndarray, k: Iterable[Tuple[int, ...]],
+            bias=None, stride=1, padding=0, dilation=1,
+            groups=1) -> torch.Tensor:
     """Compute a bspline separable convolution.
 
-    input.shape = batch, iC, iX, iY, iZ....
+    input.shape = batch, iC, iX, iY, iZ, ...
+    kernel_size.shape = kH, kW, kD, ...
     weights.shape = oC, iC / groups, nc
     c.shape = nc, idim
     s.shape = nc, idim
@@ -72,32 +84,43 @@ def _cbsconv_impl(input_, weights, c, s, k,
     For now it's possible to do that
     by manually generating more parameters since no
     optimization is yet available for the multichannel
-    convolution.
+    convolution. For now we ignore the gradient part
+    of the parameters, making this function unsuitable
+    for training.
     """
-    # Compute the minimum size of the kernel containing the
-    # centers. The kernel can be rectangular but the center
-    # of the kernel will always be the origin in the
-    # centers space.
-    bc = np.argmax(np.abs(c), axis=0)  # Boundary centers
-    cmax, smax, kmax = c[bc], s[bc], k[bc]
-    k_shape = (weights.shape[0], weights.shape[1],
-               *(cmax * 2 + smax * kmax / 2))
+    oC, iC = weights.shape[0], weights.shape[1]
+    spatial_dims = len(input_.shape[2:])
+    k = np.array(k)
 
-    # Build the output tensor.
-    output_shape = conv_output_shape(
-        input_.shape, k_shape, stride=stride, padding=padding,
-        dilation=dilation)
-    output_shape = np.array(output_shape)
+    if not isinstance(stride, Tuple):
+        stride = ((stride,) * spatial_dims)
+
+    if not isinstance(padding, Tuple):
+        padding = ((padding,) * spatial_dims)
+
+    if not isinstance(dilation, Tuple):
+        dilation = ((dilation,) * spatial_dims)
+
+    # For now we ignore the kernel size and we use the full
+    # kernel size.
+    kernel_size = CardinalBSplineKernel.centered_bounds_from_params(c, s, k)
+    kernel_size = np.ceil(kernel_size[:, 1] - kernel_size[:, 0]).astype(int)
+    kernel_size = (oC, iC, *kernel_size)
+
+    # Output tensor shape.
+    output_shape = np.array(conv_output_shape(
+        input_.shape, kernel_size, stride=stride, padding=padding,
+        dilation=dilation))
 
     # Dict of cached dd convolutions.
-    # This is a light optimization that can be extremely
+    # This is a light optimization that can be
     # useful in case of identical basis functions with identical
     # decimal centers.
     cached_convs = {}
     bases = []
     for cc, cs, ck in zip(c, s, k):
         dshifts, ishifts = tuple(zip(*(round_modf(v) for v in cc)))
-        hashable_params = (dshifts, cs, ck)
+        hashable_params = (tuple(dshifts), tuple(cs), tuple(ck))
 
         # For each center convolve w.r.t the input
         if hashable_params in cached_convs:
@@ -108,53 +131,41 @@ def _cbsconv_impl(input_, weights, c, s, k,
                                    dilation=dilation)
             cached_convs[hashable_params] = conv
 
-        #  it to fit the output.
-        cropl = (output_shape - np.array(conv.shape)) // 2
-        cropr = conv.shape - cropl + output_shape
-        crop = np.array((cropl, cropr)).T
+        cropl = (np.array(conv.shape) - output_shape) // 2
+        cropr = conv.shape - cropl - output_shape
+        crop = np.array((cropl, cropr)).T[2:].flatten()
 
         # Translate and crop the convolution to fit the output..
+        shifts = ishifts * np.array(dilation)
+        shifts = -np.flip(shifts)
+
         conv = cropped_translate(conv,
-                                 ishifts * dilation,
+                                 shifts,
                                  crop,
                                  mode='constant', value=0)
-        assert conv.shape == output_shape
-
+        assert (conv.shape == output_shape).all()
+        # At this point we have for each input channel the convolution
+        # with a basis.
         bases.append(conv)
 
     # Stack the bases before doing the tp with the weights
-    stacked_convs = torch.stack(bases)
-    return torch.tensordot(weights, stacked_convs)
+    stacked_convs = torch.stack(bases, dim=2)
+    group_iC = weights.shape[1]
 
+    stacked_convs = stacked_convs.reshape(
+        stacked_convs.shape[0],
+        groups,
+        group_iC,
+        *stacked_convs.shape[2:]
+    )
 
-def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
-            weights: torch.Tensor, c: torch.Tensor,
-            s: torch.Tensor, k: torch.Tensor,
-            bias=None, stride=1, padding=0, dilation=1,
-            groups=1) -> torch.Tensor:
-    """Interface for the cardinal BSplines d-dimensional convolution."""
-    # TODO Allow to specify a "virtual" kernel shape.
-    # This allows to explicity define the output shape as if a kernel
-    # of size kernel_size was used.
-    if kernel_size is not None:
-        raise NotImplementedError('Specifing the kernel size is'
-                                  'not yet implemented.')
-    return _cbsconv_impl(input_, kernel_size, weights, c, s, k, bias, stride,
-                         padding, dilation, groups)
-
-
-def _crop_impl(x: torch.Tensor, crop: List[Tuple[int, ...]]):
-    # Construct the bounds and padding list of tuples
-    slices = [...]
-    for pl, pr in crop:
-        pl = pl if pl else None
-        pr = pr if pr else None
-        slices.append(slice(pl, -pr))
-
-    slices = tuple(slices)
-
-    # Apply the crop and return
-    return x[slices]
+    output_channels = []
+    for i, w in enumerate(weights):
+        input_idx = (i % groups) * group_iC
+        cv = stacked_convs[:, input_idx, ...]
+        r = torch.tensordot(w, cv, dims=([0, 1], [1, 2]))
+        output_channels.append(r)
+    return torch.stack(output_channels, dim=1)
 
 
 def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
@@ -173,12 +184,33 @@ def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
     crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)]
     assert len(crop) == len(x.shape) - 2
 
-    # Call the actual implementation
-    return _crop_impl(x, crop)
+    # Construct the bounds and padding list of tuples
+    slices = [...]
+    for pl, pr in crop:
+        pl = pl if pl else None
+        pr = pr if pr else None
+        slices.append(slice(pl, -pr))
+
+    slices = tuple(slices)
+
+    # Apply the crop and return
+    return x[slices]
 
 
-def _translate_impl(x: torch.Tensor, shift: Tuple[int, ...],
-                    mode='constant', value=0) -> torch.Tensor:
+def translate(x: torch.Tensor, shift: Tuple[int, ...],
+              mode='constant', value=0) -> torch.Tensor:
+    """Translate the input.
+
+    Args:
+        x: Input tensor
+        shift: Represents the shift values for each spatial axis.
+        mode: Same argument as torch.nn.functional.pad
+        value: Same as above.
+
+    Returns:
+        Translated tensor.
+
+    """
     # Construct the bounds and padding list of tuples
     paddings = []
     slices = [...]
@@ -200,31 +232,10 @@ def _translate_impl(x: torch.Tensor, shift: Tuple[int, ...],
     return y[slices]
 
 
-def translate(x: torch.Tensor, shift: Tuple[int, ...],
-              mode='constant', value=0) -> torch.Tensor:
-    """Translate the input.
-
-    Args:
-        x: Input tensor
-        shift: Represents the shift values for each spatial axis.
-        mode: Same argument as torch.nn.functional.pad
-        value: Same as above.
-
-    Returns:
-        Translated tensor.
-
-    """
-    # Do some basic checks
-    assert len(shift) == len(x.shape) - 2
-
-    # Call the actual implementation
-    return _translate_impl(x, shift, mode, value)
-
-
 def cropped_translate(x: torch.Tensor, shift: Tuple[int, ...],
-                      crop: List[Tuple[int, ...]],
+                      crop_: List[Tuple[int, ...]],
                       mode='constant', value=0) -> torch.Tensor:
     """Apply a translation and crop the result."""
-    crop = crop if not isinstance(crop, int) else [(crop. crop)] * len(shift)
+    crop_ = crop_ if not isinstance(crop, int) else [(crop_, crop_)] * len(shift)
     y = translate(x, shift, mode, value)
-    return crop(y, crop)
+    return crop(y, crop_)

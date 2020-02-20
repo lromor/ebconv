@@ -35,9 +35,6 @@ class CardinalBSplineKernel:
 
     This class should behave as close as possible as a generic, cardinal
     and if necessary sparse b-splines kernel function.
-
-    We don't want to allow access to the set of parameters.
-    Accessing c, s, k will return a copy.
     """
 
     def __init__(self, c: np.ndarray, s: np.ndarray, k: np.ndarray):
@@ -121,7 +118,7 @@ class CardinalBSplineKernel:
             k = (((k,) * ndims,) * n)
 
         s = np.array(s)
-        k = np.array(k)
+        k = np.array(k, dtype=int)
 
         # Create the basis
         return cls(c, s, k)
