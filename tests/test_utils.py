@@ -38,7 +38,7 @@ def test_tendordot():
     separately and then performing np.tensordot().
     """
     list_fn = [np.cos, np.sin]
-    x = np.linspace(-np.pi, np.pi)
+    x = np.linspace(-np.pi, np.pi) * 2 + 3
     y = np.linspace(-np.pi, np.pi)
 
     xx, yy = np.meshgrid(x, y)
