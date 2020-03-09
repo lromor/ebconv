@@ -137,7 +137,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
         # Translate and crop the convolution to fit the output..
         shifts = ishifts * np.array(dilation)
-        shifts = -np.flip(shifts)
+        shifts = -shifts
 
         conv = cropped_translate(conv,
                                  shifts,
