@@ -45,10 +45,10 @@ class CardinalBSplineKernel:
         self._k = k
 
     @staticmethod
-    def centered_bounds_from_params(c: np.ndarray,
+    def centered_region_from_params(c: np.ndarray,
                                     s: np.ndarray,
                                     k: np.ndarray) -> np.ndarray:
-        """Return the boundaries of the smallest centered domain."""
+        """Return the size of the smallest centered region."""
         c = np.array(c)
         s = np.array(s)
         k = np.array(k)
@@ -60,11 +60,11 @@ class CardinalBSplineKernel:
         # bounds.shape == n, 2, dim
         bounds = bounds.reshape(len(bounds) * 2, -1)
         bounds = np.max(bounds, axis=0)
-        return np.array([(-b, b) for b in bounds])
+        return np.array([2 * b for b in bounds]).squeeze()
 
-    def centered_bounds(self) -> np.ndarray:
+    def centered_region(self) -> np.ndarray:
         """Return the boundaries of the smallest centered domain."""
-        return self.centered_bounds_from_params(self._c, self._s, self._k)
+        return self.centered_region_from_params(self._c, self._s, self._k)
 
     @property
     def c(self):
@@ -109,6 +109,7 @@ class CardinalBSplineKernel:
                         int] = 3) -> _TCardinalBSplineKernel:
         """Generate a bspline kernel with randomly positioned centers."""
         c = np.array(c)
+        c = c[:, None] if len(c.shape) == 1 else c
         n, ndims = c.shape
 
         if not isinstance(s, Iterable):
@@ -118,7 +119,9 @@ class CardinalBSplineKernel:
             k = (((k,) * ndims,) * n)
 
         s = np.array(s)
+        s = s[:, None] if len(s.shape) == 1 else s
         k = np.array(k, dtype=int)
+        k = k[:, None] if len(k.shape) == 1 else k
 
         # Create the basis
         return cls(c, s, k)

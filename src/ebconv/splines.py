@@ -95,7 +95,7 @@ class BSplineElement():
 
     def support_bounds(self) -> np.ndarray:
         """Return the non zero interval of the function."""
-        return np.array(tuple((k[0], k[-1]) for k in self.knots()))
+        return np.array(tuple((k[0], k[-1]) for k in self.knots())).squeeze()
 
     @classmethod
     def create_cardinal(

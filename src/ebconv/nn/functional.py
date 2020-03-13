@@ -2,7 +2,6 @@
 
 from typing import Iterable, List, Tuple
 
-from ebconv.kernel import CardinalBSplineKernel
 from ebconv.splines import BSplineElement
 from ebconv.utils import conv_output_shape, round_modf
 
@@ -12,7 +11,18 @@ import torch
 from torch.nn.functional import conv1d
 
 
-def _bsconv_subconv(input_, basis_parameters, stride, padding, dilation):
+def _sampling_domain(a, b, sp=0.5):
+    a = np.ceil(a + sp) - sp
+    b = np.floor(b - sp) + sp
+    if a > b:
+        return None
+    elif a == b:
+        return np.array(a)[None]
+    return np.arange(a, b + 1)
+
+
+def _bsconv_subconv(input_, basis_parameters, sampling_units,
+                    stride, padding, dilation):
     """Convolve a single basis."""
     iC = input_.shape[1]
     non_spatial_shape = input_.shape[:2]
@@ -21,9 +31,9 @@ def _bsconv_subconv(input_, basis_parameters, stride, padding, dilation):
     conv = input_
 
     # We convolve the separable basis
-    for dshift, s, k, dstride, dpadding, ddilation \
+    for dshift, s, k, dstride, dpadding, ddilation, sampling_unit \
         in zip(*basis_parameters, stride,
-               padding, dilation):
+               padding, dilation, sampling_units):
         # Store the original shape of the input tensor.
         initial_shape = conv.shape
 
@@ -33,9 +43,9 @@ def _bsconv_subconv(input_, basis_parameters, stride, padding, dilation):
         # Create the basis function and sample it.
         spline = BSplineElement.create_cardinal(dshift, s, k)
 
-        # Sample the support of the spline
-        lb, ub = spline.support_bounds().squeeze()
-        x = np.arange(lb, ub) + 0.5
+        # Sample the almost centered spline.
+        lb, ub = spline.support_bounds()
+        x = _sampling_domain(lb, ub, sampling_unit)
         spline_w = torch.Tensor(spline(x)).reshape(1, -1)
         spline_w = torch.stack([spline_w for i in range(iC)])
         width = spline_w.shape[-1]
@@ -56,7 +66,9 @@ def _bsconv_subconv(input_, basis_parameters, stride, padding, dilation):
 
         # Remove the excess from the 1d convolution.
         conv = conv.reshape(*non_spatial_shape, strides, -1)
-        conv = conv[..., :-(width - 1)]
+        crop = -(width - 1)
+        crop = None if crop == 0 else crop
+        conv = conv[..., :crop]
         conv = conv.reshape(*initial_shape[:-1], -1)
 
         # Permute to axes to have the one we are dealing with as last.
@@ -103,13 +115,13 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # For now we ignore the kernel size and we use the full
     # kernel size.
-    kernel_size = CardinalBSplineKernel.centered_bounds_from_params(c, s, k)
-    kernel_size = np.ceil(kernel_size[:, 1] - kernel_size[:, 0]).astype(int)
-    kernel_size = (oC, iC, *kernel_size)
+    # kernel_size = CardinalBSplineKernel.centered_region_from_params(c, s, k)
+    # kernel_size = np.ceil(kernel_size[:, 1] - kernel_size[:, 0]).astype(int)
+    # kernel_size = (oC, iC, *kernel_size)
 
     # Output tensor shape.
     output_shape = np.array(conv_output_shape(
-        input_.shape, kernel_size, stride=stride, padding=padding,
+        input_.shape, (oC, iC, *kernel_size), stride=stride, padding=padding,
         dilation=dilation))
 
     # Dict of cached dd convolutions.
@@ -126,14 +138,27 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         if hashable_params in cached_convs:
             conv = cached_convs[hashable_params]
         else:
-            conv = _bsconv_subconv(input_, hashable_params,
+            # If the kernel size is even, the sampling point are centered
+            # in half integers (i.e. [..., -1.5, -0.5, 0.5, 1.5, ...])
+            # If the kernel size is odd, they are centered in integer values.
+            # (i.e [..., -2, -1, 0, 1, 2, ...])
+            sampling_units = [0.5 if ks % 2 == 0 else 0.0
+                              for ks in kernel_size]
+
+            # Convolve the input with the basis.
+            conv = _bsconv_subconv(input_, hashable_params, sampling_units,
                                    stride=stride, padding=padding,
                                    dilation=dilation)
+
+            # Cache it.
             cached_convs[hashable_params] = conv
 
         cropl = (np.array(conv.shape) - output_shape) // 2
         cropr = conv.shape - cropl - output_shape
-        crop = np.array((cropl, cropr)).T[2:].flatten()
+        crop = np.where(np.array(dshifts) < 0,
+                        np.array((cropl, cropr)),
+                        np.array((cropr, cropl)))
+        crop = crop.T[2:].flatten()
 
         # Translate and crop the convolution to fit the output..
         shifts = ishifts * np.array(dilation)
@@ -187,9 +212,9 @@ def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
     # Construct the bounds and padding list of tuples
     slices = [...]
     for pl, pr in crop:
-        pl = pl if pl else None
-        pr = pr if pr else None
-        slices.append(slice(pl, -pr))
+        pl = pl if pl != 0 else None
+        pr = -pr if pr != 0 else None
+        slices.append(slice(pl, pr, None))
 
     slices = tuple(slices)
 
