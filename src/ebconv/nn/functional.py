@@ -192,9 +192,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         *stacked_convs.shape[2:])
 
     output_channels = []
-    dims = np.arange(len(stacked_convs.shape[1:]))[1:]
-    dims = np.array((dims, dims))
-    dims = [tuple(v) for v in dims]
     for i, w in enumerate(weights):
         input_idx = (i % groups) * group_iC
         cv = stacked_convs[:, input_idx, ...]

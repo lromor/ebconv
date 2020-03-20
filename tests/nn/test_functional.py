@@ -12,6 +12,7 @@ import pytest
 import torch
 
 
+@pytest.mark.parametrize('batch', [10])
 @pytest.mark.parametrize('k', [1, 2, 3])
 @pytest.mark.parametrize('s', [0.5, 1.3])
 @pytest.mark.parametrize('c', [
@@ -19,7 +20,7 @@ import torch
     (-5, 4.6, 0.9, 10.3),
     (10.4, 3.7, -5.4),
 ])
-def test_cbsconv1d(c, s, k):
+def test_cbsconv1d(c, s, k, batch):
     """Test the 1d numerical solution of bspline conv.
 
     Perform a basis check for a simple 1d signal
@@ -42,18 +43,18 @@ def test_cbsconv1d(c, s, k):
 
     # kernel size > input_size
     with pytest.raises(RuntimeError):
-        input_ = torch.rand((1, 1, kernel_size - 1))
+        input_ = torch.rand((batch, 1, kernel_size - 1))
         cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
 
     # kernel size == input size
-    input_ = torch.rand(1, 1, kernel_size)
+    input_ = torch.rand(batch, 1, kernel_size)
     w_ = torch.Tensor(kw)[None, None, :]
     torch_conv = torch.nn.functional.conv1d(input_, w_)
     cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
     assert np.allclose(torch_conv, cbs_conv)
 
     # kernel_size * 2 == input_size
-    input_ = torch.rand(1, 1, kernel_size * 2)
+    input_ = torch.rand(batch, 1, kernel_size * 2)
     torch_conv = torch.nn.functional.conv1d(input_, w_)
     cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
     assert np.allclose(torch_conv, cbs_conv)
