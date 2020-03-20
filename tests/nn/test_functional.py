@@ -36,7 +36,7 @@ def test_cbsconv1d(c, s, k):
     kernel_size = int(kb.centered_region().round())
     x = sampling_domain(kernel_size)
     bases = kb(x)
-    w = np.ones_like(c)
+    w = np.random.rand(*np.array(c).shape)
     kw = np.tensordot(w, bases, axes=1)
     bw_ = torch.Tensor(w)[None, None, :]
 

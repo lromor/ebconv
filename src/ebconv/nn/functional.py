@@ -160,19 +160,14 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             # Cache it.
             cached_convs[spline_w] = conv
 
-        # We are going to first crop and the shift the output.
-        # To compute the cropping values, we need to take into account
-        # the shift that will take place.
-        cropr = (np.array(conv.shape) - output_shape) // 2
-        cropl = conv.shape - cropr - output_shape
+        # Crop the values.
+        spatial_os = output_shape[2:]
+        spatial_cs = np.array(conv.shape)[2:]
+        cropr = (spatial_cs - spatial_os) // 2 - shift * np.array(dilation)
+        cropl = spatial_cs - cropr - spatial_os
         crop_ = np.array((cropl, cropr))
-        crop_ = crop_.T[2:].flatten()
+        crop_ = crop_.T.flatten()
 
-        # Translate and crop the convolution to fit the output..
-        shift = shift * np.array(dilation)
-        shift = -shift
-
-        conv = translate(conv, shift)
         conv = crop(conv, crop_)
         assert (conv.shape == output_shape).all()
 
@@ -181,7 +176,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         bases.append(conv)
 
         # Add the weight
-        relevant_weights.append(weights[..., i][:, None])
+        relevant_weights.append(weights[..., i])
 
     if len(relevant_weights) == 0:
         return torch.zeros(tuple(output_shape))
@@ -193,19 +188,23 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     group_iC = weights.shape[1]
 
     stacked_convs = stacked_convs.reshape(
-        stacked_convs.shape[0],
-        groups,
-        group_iC,
-        *stacked_convs.shape[2:]
-    )
+        stacked_convs.shape[0], groups, group_iC,
+        *stacked_convs.shape[2:])
 
     output_channels = []
+    dims = np.arange(len(stacked_convs.shape[1:]))[1:]
+    dims = np.array((dims, dims))
+    dims = [tuple(v) for v in dims]
     for i, w in enumerate(weights):
         input_idx = (i % groups) * group_iC
         cv = stacked_convs[:, input_idx, ...]
-        r = torch.tensordot(w, cv, dims=([0, 1], [1, 2]))
+        # Contract everything except the first two dims.
+        r = torch.tensordot(w, cv, dims=[(0, 1), (1, 2)])
         output_channels.append(r)
-    return torch.stack(output_channels, dim=1)
+
+    result = torch.stack(output_channels, dim=1)
+    assert (result.shape == output_shape).all()
+    return result
 
 
 def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
