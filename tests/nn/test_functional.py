@@ -3,6 +3,7 @@ from ebconv.kernel import CardinalBSplineKernel
 from ebconv.nn.functional import cbsconv
 from ebconv.nn.functional import crop
 from ebconv.nn.functional import translate
+from ebconv.utils import sampling_domain
 
 import numpy as np
 
@@ -18,8 +19,7 @@ import torch
     (-5, 4.6, 0.9, 10.3),
     (10.4, 3.7, -5.4),
 ])
-@pytest.mark.parametrize('i_size', [(1, 1, 50)])
-def test_cbsconv1d(i_size, c, s, k):
+def test_cbsconv1d(c, s, k):
     """Test the 1d numerical solution of bspline conv.
 
     Perform a basis check for a simple 1d signal
@@ -28,62 +28,57 @@ def test_cbsconv1d(i_size, c, s, k):
     """
     kb = CardinalBSplineKernel.create(c=c, s=s, k=k)
 
-    # Sample the kernel
-    kernel_size = kb.centered_region().round()
-    cb = np.array((-kernel_size / 2, kernel_size / 2))
-    x = np.arange(cb[0], cb[1]) + 0.5
+    # First we test the behavior using of the exact size
+    # of the smallest centered region.
 
+    # Sample the smallest centered region containing all the non-zero
+    # values of the kernel.
+    kernel_size = int(kb.centered_region().round())
+    x = sampling_domain(kernel_size)
     bases = kb(x)
-
     w = np.ones_like(c)
     kw = np.tensordot(w, bases, axes=1)
+    bw_ = torch.Tensor(w)[None, None, :]
 
-    # Standard convolution
-    input_ = torch.rand(i_size)
+    # kernel size > input_size
+    with pytest.raises(RuntimeError):
+        input_ = torch.rand((1, 1, kernel_size - 1))
+        cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
+
+    # kernel size == input size
+    input_ = torch.rand(1, 1, kernel_size)
     w_ = torch.Tensor(kw)[None, None, :]
     torch_conv = torch.nn.functional.conv1d(input_, w_)
-
-    # Cardinal B-spline convolution.
-    bw_ = torch.Tensor(w)[None, None, :]
     cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
     assert np.allclose(torch_conv, cbs_conv)
 
-
-@pytest.mark.skip(reason='Missing 2d test impl.')
-@pytest.mark.parametrize('k', [1, 2, 3])
-@pytest.mark.parametrize('s', [0.5, 1.3])
-@pytest.mark.parametrize('c', [
-    (0.0, 0.0), (-6.9, 3.2), (-0.3, 0.9), (1.3, -3), (2.9, 0),
-    [(-5, 4.6), (0.9, 10.3), (-0.3, 0.9)],
-])
-@pytest.mark.parametrize('i_size', [(1, 1, 50, 50)])
-def test_cbsconv2d(i_size, c, s, k):
-    """Test the 2d numerical solution of bspline conv.
-
-    Perform a basis check for a simple 1d signal
-    with different shifts and sizes with a specified
-    set of centers.
-    """
-    kb = CardinalBSplineKernel.create(c=c, s=s, k=k)
-
-    # Sample the kernel
-    kernel_size = kb.centered_region().round()
-    cb = np.array((-kernel_size / 2, kernel_size / 2))
-    x = np.arange(cb[0], cb[1]) + 0.5
-
-    bases = kb(x)
-
-    w = np.ones_like(c)
-    kw = np.tensordot(w, bases, axes=1)
-
-    # Standard convolution
-    input_ = torch.rand(i_size)
-    w_ = torch.Tensor(kw)[None, None, :]
+    # kernel_size * 2 == input_size
+    input_ = torch.rand(1, 1, kernel_size * 2)
     torch_conv = torch.nn.functional.conv1d(input_, w_)
-
-    # Cardinal B-spline convolution.
-    bw_ = torch.Tensor(w)[None, None, :]
     cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
+    assert np.allclose(torch_conv, cbs_conv)
+
+    # Then we test custom sizes of the kernel.
+    # First we start with a smaller version
+    kernel_size_small = int(round(kernel_size / 2)) + 1
+    x_small = sampling_domain(kernel_size_small)
+    bases = kb(x_small)
+    kw = np.tensordot(w, bases, axes=1)
+    w_ = torch.Tensor(kw)[None, None, :]
+    bw_ = torch.Tensor(w)[None, None, :]
+    torch_conv = torch.nn.functional.conv1d(input_, w_)
+    cbs_conv = cbsconv(input_, (kernel_size_small,), bw_, kb.c, kb.s, kb.k)
+    assert np.allclose(torch_conv, cbs_conv)
+
+    # then with a bigger version.
+    kernel_size_big = int(round(kernel_size * 2))
+    x_big = sampling_domain(kernel_size_big)
+    bases = kb(x_big)
+    kw = np.tensordot(w, bases, axes=1)
+    w_ = torch.Tensor(kw)[None, None, :]
+    bw_ = torch.Tensor(w)[None, None, :]
+    torch_conv = torch.nn.functional.conv1d(input_, w_)
+    cbs_conv = cbsconv(input_, (kernel_size_big,), bw_, kb.c, kb.s, kb.k)
     assert np.allclose(torch_conv, cbs_conv)
 
 

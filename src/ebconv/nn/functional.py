@@ -3,7 +3,8 @@
 from typing import Iterable, List, Tuple
 
 from ebconv.splines import BSplineElement
-from ebconv.utils import conv_output_shape, round_modf
+from ebconv.utils import conv_output_shape
+from ebconv.utils import sampling_domain
 
 import numpy as np
 
@@ -11,19 +12,8 @@ import torch
 from torch.nn.functional import conv1d
 
 
-def _sampling_domain(a, b, sp=0.5):
-    a = np.ceil(a + sp) - sp
-    b = np.floor(b - sp) + sp
-    if a > b:
-        return None
-    elif a == b:
-        return np.array(a)[None]
-    return np.arange(a, b + 1)
-
-
-def _bsconv_subconv(input_, basis_parameters, sampling_units,
-                    stride, padding, dilation):
-    """Convolve a single basis."""
+def _separable_conv(input_, weights, stride, padding, dilation):
+    """Compute a separable convolution."""
     iC = input_.shape[1]
     non_spatial_shape = input_.shape[:2]
     spatial_dims = len(input_.shape[2:])
@@ -31,31 +21,21 @@ def _bsconv_subconv(input_, basis_parameters, sampling_units,
     conv = input_
 
     # We convolve the separable basis
-    for dshift, s, k, dstride, dpadding, ddilation, sampling_unit \
-        in zip(*basis_parameters, stride,
-               padding, dilation, sampling_units):
+    params = (weights, stride, padding, dilation)
+    for dweights, dstride, dpadding, ddilation in zip(*params):
         # Store the original shape of the input tensor.
         initial_shape = conv.shape
 
         # Compute the number of 1d strides
         strides = np.prod(initial_shape[2:-1], dtype=int)
-
-        # Create the basis function and sample it.
-        spline = BSplineElement.create_cardinal(dshift, s, k)
-
-        # Sample the almost centered spline.
-        lb, ub = spline.support_bounds()
-        x = _sampling_domain(lb, ub, sampling_unit)
-        spline_w = torch.Tensor(spline(x)).reshape(1, -1)
-        spline_w = torch.stack([spline_w for i in range(iC)])
-        width = spline_w.shape[-1]
+        dweights = dweights.reshape(1, -1)
+        dweights = torch.stack([dweights for i in range(iC)])
+        width = dweights.shape[-1]
 
         # Compute the theoretical ddconvolution
         # Perform the 1d convolution
         conv = conv1d(conv.reshape(*non_spatial_shape, -1),
-                      spline_w,
-                      stride=dstride,
-                      padding=dpadding,
+                      dweights, stride=dstride, padding=dpadding,
                       dilation=ddilation, groups=iC)
 
         # Add at the end extra values to have the right shape
@@ -74,6 +54,27 @@ def _bsconv_subconv(input_, basis_parameters, sampling_units,
         # Permute to axes to have the one we are dealing with as last.
         conv = conv.permute(0, 1, *paxes)
     return conv
+
+
+def sample_basis(spline, sx):
+    """Sample a spline object."""
+    support_bounds = spline.support_bounds()
+    support_bounds = support_bounds if len(support_bounds.shape) == 2 \
+        else support_bounds[None, :]
+
+    samples = []
+    shift = []
+    for domain, (lb, ub) in zip(sx, support_bounds):
+        x = domain[(domain >= lb) & (domain <= ub)]
+        if len(x) == 0:
+            return torch.Tensor(), None
+
+        # Sample the spline over x.
+        spline_w = torch.Tensor(spline(x))
+        new_center = np.mean(x)
+        samples.append(spline_w)
+        shift.append(new_center)
+    return tuple(samples), tuple(shift)
 
 
 def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
@@ -101,7 +102,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     for training.
     """
     oC, iC = weights.shape[0], weights.shape[1]
-    spatial_dims = len(input_.shape[2:])
+    spatial_shape = input_.shape[2:]
+    spatial_dims = len(spatial_shape)
     k = np.array(k)
 
     if not isinstance(stride, Tuple):
@@ -113,16 +115,22 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     if not isinstance(dilation, Tuple):
         dilation = ((dilation,) * spatial_dims)
 
-    # For now we ignore the kernel size and we use the full
-    # kernel size.
-    # kernel_size = CardinalBSplineKernel.centered_region_from_params(c, s, k)
-    # kernel_size = np.ceil(kernel_size[:, 1] - kernel_size[:, 0]).astype(int)
-    # kernel_size = (oC, iC, *kernel_size)
+    if (np.array(spatial_shape) < np.array(kernel_size)).any():
+        raise RuntimeError("Kernel size can't be greater than actual"
+                           'input size')
 
     # Output tensor shape.
     output_shape = np.array(conv_output_shape(
         input_.shape, (oC, iC, *kernel_size), stride=stride, padding=padding,
         dilation=dilation))
+
+    # Sampling domain.
+    sx = [sampling_domain(s) for s in kernel_size]
+
+    # List of weights of the bases for which
+    # the support is contained in the sampling region
+    # of the kernel
+    relevant_weights = []
 
     # Dict of cached dd convolutions.
     # This is a light optimization that can be
@@ -130,48 +138,60 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     # decimal centers.
     cached_convs = {}
     bases = []
-    for cc, cs, ck in zip(c, s, k):
-        dshifts, ishifts = tuple(zip(*(round_modf(v) for v in cc)))
-        hashable_params = (tuple(dshifts), tuple(cs), tuple(ck))
+    for i, (cc, cs, ck) in enumerate(zip(c, s, k)):
+        # Sample the basis function and check if it's inside the
+        # sampling domain.
+        spline = BSplineElement.create_cardinal(cc, cs, ck)
+        spline_w, shift = sample_basis(spline, sx)
+
+        # Skip this convolution, it's not inside the sampling
+        # region.
+        if len(spline_w) == 0:
+            continue
+
+        # Compute the integral part of the shift.
+        ishift = tuple(int(v) for v in shift)
 
         # For each center convolve w.r.t the input
-        if hashable_params in cached_convs:
-            conv = cached_convs[hashable_params]
+        if spline_w in cached_convs:
+            conv = cached_convs[spline_w]
         else:
-            # If the kernel size is even, the sampling point are centered
-            # in half integers (i.e. [..., -1.5, -0.5, 0.5, 1.5, ...])
-            # If the kernel size is odd, they are centered in integer values.
-            # (i.e [..., -2, -1, 0, 1, 2, ...])
-            sampling_units = [0.5 if ks % 2 == 0 else 0.0
-                              for ks in kernel_size]
-
             # Convolve the input with the basis.
-            conv = _bsconv_subconv(input_, hashable_params, sampling_units,
-                                   stride=stride, padding=padding,
-                                   dilation=dilation)
+            conv = _separable_conv(input_, spline_w, stride=stride,
+                                   padding=padding, dilation=dilation)
 
             # Cache it.
-            cached_convs[hashable_params] = conv
+            cached_convs[spline_w] = conv
 
+        # We are going to first crop and the shift the output.
+        # To compute the cropping values, we need to take into account
+        # the shift that will take place.
         cropl = (np.array(conv.shape) - output_shape) // 2
         cropr = conv.shape - cropl - output_shape
-        crop = np.where(np.array(dshifts) < 0,
-                        np.array((cropl, cropr)),
-                        np.array((cropr, cropl)))
-        crop = crop.T[2:].flatten()
+        crop_ = np.where(np.array(shift) < 0,
+                         np.array((cropl, cropr)),
+                         np.array((cropr, cropl)))
+        crop_ = crop_.T[2:].flatten()
 
         # Translate and crop the convolution to fit the output..
-        shifts = ishifts * np.array(dilation)
-        shifts = -shifts
+        ishift = ishift * np.array(dilation)
+        ishift = -ishift
 
-        conv = cropped_translate(conv,
-                                 shifts,
-                                 crop,
-                                 mode='constant', value=0)
+        conv = translate(conv, ishift)
+        conv = crop(conv, crop_)
         assert (conv.shape == output_shape).all()
+
         # At this point we have for each input channel the convolution
         # with a basis.
         bases.append(conv)
+
+        # Add the weight
+        relevant_weights.append(weights[..., i][:, None])
+
+    if len(relevant_weights) == 0:
+        return torch.zeros(tuple(output_shape))
+
+    weights = torch.stack(relevant_weights, dim=-1)
 
     # Stack the bases before doing the tp with the weights
     stacked_convs = torch.stack(bases, dim=2)
@@ -255,12 +275,3 @@ def translate(x: torch.Tensor, shift: Tuple[int, ...],
 
     # Apply the crop and return
     return y[slices]
-
-
-def cropped_translate(x: torch.Tensor, shift: Tuple[int, ...],
-                      crop_: List[Tuple[int, ...]],
-                      mode='constant', value=0) -> torch.Tensor:
-    """Apply a translation and crop the result."""
-    crop_ = crop_ if not isinstance(crop, int) else [(crop_, crop_)] * len(shift)
-    y = translate(x, shift, mode, value)
-    return crop(y, crop_)

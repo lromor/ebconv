@@ -5,12 +5,6 @@ from typing import Iterable, Tuple, Union
 import numpy as np
 
 
-def round_modf(x: float) -> Tuple[float, int]:
-    """Similar to math.modf but using round."""
-    i = int(round(x))
-    return x - i, i
-
-
 def tensordot(fns):
     """Return a callable that evalautes the tensor product."""
     def fn(*args, **kwargs):
@@ -63,3 +57,8 @@ def conv_output_shape(ishape: Tuple[int],
     sd = np.floor(sd).astype(int)
 
     return (ishape[0], wshape[0], *sd)
+
+
+def sampling_domain(kernel_size):
+    """Sample over a discrete unit separated domain within two ranges a, b."""
+    return np.arange(-kernel_size / 2, kernel_size / 2) + 0.5
