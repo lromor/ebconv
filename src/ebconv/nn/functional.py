@@ -71,7 +71,7 @@ def sample_basis(spline, sx):
 
         # Sample the spline over x.
         spline_w = torch.Tensor(spline(x))
-        new_center = np.mean(x)
+        new_center = int(np.floor(np.mean(x)))
         samples.append(spline_w)
         shift.append(new_center)
     return tuple(samples), tuple(shift)
@@ -149,9 +149,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         if len(spline_w) == 0:
             continue
 
-        # Compute the integral part of the shift.
-        ishift = tuple(int(v) for v in shift)
-
         # For each center convolve w.r.t the input
         if spline_w in cached_convs:
             conv = cached_convs[spline_w]
@@ -166,18 +163,16 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         # We are going to first crop and the shift the output.
         # To compute the cropping values, we need to take into account
         # the shift that will take place.
-        cropl = (np.array(conv.shape) - output_shape) // 2
-        cropr = conv.shape - cropl - output_shape
-        crop_ = np.where(np.array(shift) < 0,
-                         np.array((cropl, cropr)),
-                         np.array((cropr, cropl)))
+        cropr = (np.array(conv.shape) - output_shape) // 2
+        cropl = conv.shape - cropr - output_shape
+        crop_ = np.array((cropl, cropr))
         crop_ = crop_.T[2:].flatten()
 
         # Translate and crop the convolution to fit the output..
-        ishift = ishift * np.array(dilation)
-        ishift = -ishift
+        shift = shift * np.array(dilation)
+        shift = -shift
 
-        conv = translate(conv, ishift)
+        conv = translate(conv, shift)
         conv = crop(conv, crop_)
         assert (conv.shape == output_shape).all()
 
