@@ -76,7 +76,7 @@ class BSplineElement():
 
     def dimensionality(self) -> int:
         """Return the number of dimensions of the basis element."""
-        return len(self._univariate_spines)
+        return len(self._univariate_splines)
 
     def knots(self) -> List[np.ndarray]:
         """Return a list of knots for every dimension."""
@@ -91,7 +91,7 @@ class BSplineElement():
 
     def get_order(self) -> List[int]:
         """Return the spline order for every dimension."""
-        return [b.k for b in self._univariate_spines]
+        return [b.k for b in self._univariate_splines]
 
     def support_bounds(self) -> np.ndarray:
         """Return the non zero interval of the function."""

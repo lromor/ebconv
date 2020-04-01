@@ -254,7 +254,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     group_input_channels = weights.shape[1]
 
     stacked_convs = stacked_convs.reshape(
-        stacked_convs.shape[0], groups, group_iC,
+        stacked_convs.shape[0], groups, group_input_channels,
         *stacked_convs.shape[2:])
 
     output_channels = []
@@ -284,14 +284,14 @@ def crop(input_: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
     """
     assert len(crop) % 2 == 0
     crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)]
-    assert len(crop) == len(x.shape) - 2
+    assert len(crop) == len(input_.shape) - 2
 
     # Construct the bounds and padding list of tuples
     slices = [...]
     for left, right in crop:
         left = left if left != 0 else None
         right = -right if right != 0 else None
-        slices.append(slice(left, pright, None))
+        slices.append(slice(left, right, None))
 
     slices = tuple(slices)
 
@@ -318,7 +318,7 @@ def translate(input_: torch.Tensor, shift: Tuple[int, ...],
     slices = [...]
     for axis_shift in reversed(shift):
         abs_shift = abs(axis_shift)
-        if s > 0:
+        if axis_shift > 0:
             paddings.append(abs_shift)
             paddings.append(0)
             slices.insert(1, slice(0, -abs_shift if abs_shift else None))
