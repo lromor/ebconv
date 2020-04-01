@@ -10,8 +10,10 @@ def tensordot(fns):
     def fn(*args, **kwargs):
         if len(args) > len(fns):
             raise TypeError('Too many arguments.')
-        return np.multiply.reduce(
-            [f(a) for f, a in zip(fns, args)]).T
+        out = 1
+        for f, a in zip(fns, args):
+            out *= f(a)
+        return out.T
     return fn
 
 

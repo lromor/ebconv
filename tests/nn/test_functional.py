@@ -1,6 +1,7 @@
 
 from ebconv.kernel import CardinalBSplineKernel
 from ebconv.nn.functional import cbsconv
+from ebconv.nn.functional import convdd_separable
 from ebconv.nn.functional import crop
 from ebconv.nn.functional import translate
 from ebconv.utils import sampling_domain
@@ -130,3 +131,58 @@ def test_crop_simple():
             (2.0, 3.0),
             (5.0, 6.0),
         ))[None, None, :])
+
+
+D2F = {
+    1: torch.nn.functional.conv1d,
+    2: torch.nn.functional.conv2d,
+    3: torch.nn.functional.conv3d
+}
+
+D2I = {
+    0: 'a',
+    1: 'b',
+    2: 'c'
+}
+
+
+@pytest.mark.parametrize('dilation', [1, 2])
+@pytest.mark.parametrize('padding', [0, 1])
+@pytest.mark.parametrize('stride', [1, 2])
+@pytest.mark.parametrize('dim', [1, 2, 3])
+@pytest.mark.parametrize('w_size', [1, 2])
+@pytest.mark.parametrize('iC, oC, groups', [
+    (6, 4, 2),
+    (3, 3, 1),
+    (3, 3, 3),
+])
+def test_convdd_separable(iC, oC, groups, w_size, dim, stride,
+                          padding, dilation):
+    """Test consistent values with torch.
+
+    Input size is fixed to 8, 16, 32 with 3 batches.
+    """
+    batch = 3
+    isize = np.power(2, np.arange(3, 3 + dim))
+    input_ = torch.rand(batch, iC, *isize)
+
+    weight = []
+    for i in range(dim):
+        weight.append(torch.rand(oC, iC // groups, w_size + i))
+
+    # Compute tensordot using einsum.
+    einsum_eq = ['ij' + D2I[d] for d in range(dim)]
+    einsum_eq = ','.join(einsum_eq)
+    einsum_eq += '->'
+    einsum_eq += 'ij' + ''.join([D2I[d] for d in range(dim)])
+
+    torch_weight = torch.einsum(einsum_eq, *weight)
+
+    # Function to test against
+    tconv = D2F[dim]
+    torch_output = tconv(input_, torch_weight, stride=stride,
+                         padding=padding, dilation=dilation, groups=groups)
+    output = convdd_separable(input_, weight, stride=stride,
+                              padding=padding, dilation=dilation,
+                              groups=groups)
+    assert torch.allclose(torch_output, output)

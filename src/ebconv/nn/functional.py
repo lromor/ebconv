@@ -1,59 +1,123 @@
 """Definition of main workhorse functions made for pytorch."""
 
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple, Union
+
+import numpy as np
+
+import torch
 
 from ebconv.splines import BSplineElement
 from ebconv.utils import conv_output_shape
 from ebconv.utils import sampling_domain
 
-import numpy as np
 
-import torch
-from torch.nn.functional import conv1d
+def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
+    """Implement the separable convolution for a single filter.
 
-
-def _separable_conv(input_, weights, stride, padding, dilation):
-    """Compute a separable convolution."""
-    iC = input_.shape[1]
-    non_spatial_shape = input_.shape[:2]
+    This functions takes care of evaluating for each group
+    the separable convolution of a single filter. The filters
+    should contracted afterwards.
+    """
+    batch = input_.shape[0]
+    output_channels = weight[0].shape[0]
     spatial_dims = len(input_.shape[2:])
+
+    # Set of axes to permute. The first two are skipped
+    # as they are the batch and the input channels.
     paxes = np.roll(np.arange(2, spatial_dims + 2), 1)
     conv = input_
 
-    # We convolve the separable basis
-    params = (weights, stride, padding, dilation)
-    for dweights, dstride, dpadding, ddilation in zip(*params):
-        # Store the original shape of the input tensor.
-        initial_shape = conv.shape
+    # We convolve the separable kernel.
+    # We iterate per dimension.
+    params = (weight, stride, dilation)
+    for dweights, dstride, ddilation in zip(*params):
+        # The iC changes to oC after the first conv
+        input_channels = conv.shape[1]
 
-        # Compute the number of 1d strides
-        strides = np.prod(initial_shape[2:-1], dtype=int)
-        dweights = dweights.reshape(1, -1)
-        dweights = torch.stack([dweights for i in range(iC)])
+        # Store the original spatial shape of the input tensor.
         width = dweights.shape[-1]
+        width = ddilation * (width - 1) + 1
+
+        # Extend the input to fit the striding.
+        spatial_shape = conv.shape[2:]
+        axis_size = spatial_shape[-1]
+        nshifts = axis_size // dstride
+        oasize = np.floor((axis_size - width) / dstride + 1).astype(int)
+
+        # Required excess to make the stride "stationary"
+        # i.e. the convolution for the next row starts correctly.
+        excess = dstride * (nshifts + 1) - axis_size
+        conv = torch.nn.functional.pad(conv, (0, excess))
+        new_oasize = np.floor((conv.shape[-1] - width) / dstride + 1).astype(int)
+        crop_ = new_oasize - oasize
 
         # Compute the theoretical ddconvolution
         # Perform the 1d convolution
-        conv = conv1d(conv.reshape(*non_spatial_shape, -1),
-                      dweights, stride=dstride, padding=dpadding,
-                      dilation=ddilation, groups=iC)
+        conv = torch.nn.functional.conv1d(
+            conv.reshape(*conv.shape[:2], -1),
+            dweights, bias=bias, stride=dstride, padding=0,
+            dilation=ddilation, groups=input_channels)
 
         # Add at the end extra values to have the right shape
         # to remove the excess of values due to tha fake ddim
         # 1d conv.
-        conv = torch.cat([conv, torch.empty(*non_spatial_shape, width - 1)],
+
+        overlap_size = (width - 1) // dstride
+        conv = torch.cat([conv, torch.empty(*conv.shape[:2], overlap_size)],
                          dim=-1)
 
         # Remove the excess from the 1d convolution.
-        conv = conv.reshape(*non_spatial_shape, strides, -1)
-        crop = -(width - 1)
-        crop = None if crop == 0 else crop
-        conv = conv[..., :crop]
-        conv = conv.reshape(*initial_shape[:-1], -1)
-
-        # Permute to axes to have the one we are dealing with as last.
+        conv = conv.reshape(batch, output_channels, *spatial_shape[:-1], -1)
+        crop_ += overlap_size
+        crop_ = None if crop_ == 0 else -crop_
+        conv = conv[..., :crop_]
+        # Permute axes to have the one we are dealing with as last.
         conv = conv.permute(0, 1, *paxes)
     return conv
+
+
+def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
+                     bias: Optional[torch.Tensor] = None,
+                     stride: Union[int, Tuple[int, ...]] = 1,
+                     padding: Union[int, Tuple[int, ...]] = 0,
+                     dilation: Union[int, Tuple[int, ...]] = 1,
+                     groups: int = 1):
+    """Compute a separable d-dimensional convolution."""
+    spatial_shape = input_.shape[2:]
+    spatial_dims = len(spatial_shape)
+
+    # There should be a weight per dimension.
+    assert spatial_dims == len(weight)
+    assert groups > 0
+
+    weight = weight[::-1]
+    if not isinstance(stride, Tuple):
+        stride = ((stride,) * spatial_dims)
+
+    if not isinstance(padding, Tuple):
+        padding = ((padding,) * spatial_dims)
+
+    if not isinstance(dilation, Tuple):
+        dilation = ((dilation,) * spatial_dims)
+
+    # Add the padding
+    pad = [(p, p) for p in padding]
+    pad = sum(pad, ())
+    input_ = torch.nn.functional.pad(input_, pad)
+
+    oC, giC = weight[0].shape[:2]
+    new_ishape = input_.shape[0], groups, -1, *input_.shape[2:]
+
+    # Reshape into batch, group, group filters, ...
+    input_ = input_.reshape(new_ishape)
+
+    # Split along the filters the weights
+    weight = [[w[:, i, ...].unsqueeze(1) for w in weight] for i in range(giC)]
+    return torch.stack([
+        _convdd_separable_per_filter(
+            input_[:, :, i, ...], weight[i], bias, stride, dilation)
+        for i in range(giC)
+    ]).sum(dim=0)
 
 
 def sample_basis(spline, sx):
@@ -101,7 +165,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     of the parameters, making this function unsuitable
     for training.
     """
-    oC, iC = weights.shape[0], weights.shape[1]
+    output_channels, input_channels = weights.shape[0], weights.shape[1]
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
     k = np.array(k)
@@ -121,11 +185,12 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # Output tensor shape.
     output_shape = np.array(conv_output_shape(
-        input_.shape, (oC, iC, *kernel_size), stride=stride, padding=padding,
+        input_.shape, (output_channels, input_channels, *kernel_size),
+        stride=stride, padding=padding,
         dilation=dilation))
 
     # Sampling domain.
-    sx = [sampling_domain(s) for s in kernel_size]
+    sampling_x = [sampling_domain(s) for s in kernel_size]
 
     # List of weights of the bases for which
     # the support is contained in the sampling region
@@ -138,11 +203,11 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     # decimal centers.
     cached_convs = {}
     bases = []
-    for i, (cc, cs, ck) in enumerate(zip(c, s, k)):
+    for i, (spline_c, spline_s, spline_k) in enumerate(zip(c, s, k)):
         # Sample the basis function and check if it's inside the
         # sampling domain.
-        spline = BSplineElement.create_cardinal(cc, cs, ck)
-        spline_w, shift = sample_basis(spline, sx)
+        spline = BSplineElement.create_cardinal(spline_c, spline_s, spline_k)
+        spline_w, shift = sample_basis(spline, sampling_x)
 
         # Skip this convolution, it's not inside the sampling
         # region.
@@ -153,9 +218,10 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         if spline_w in cached_convs:
             conv = cached_convs[spline_w]
         else:
+            sw_tensor = [torch.Tensor(w).reshape(1, 1, -1) for w in spline_w]
             # Convolve the input with the basis.
-            conv = _separable_conv(input_, spline_w, stride=stride,
-                                   padding=padding, dilation=dilation)
+            conv = convdd_separable(input_, sw_tensor, bias, stride=stride,
+                                    padding=padding, dilation=dilation)
 
             # Cache it.
             cached_convs[spline_w] = conv
@@ -185,26 +251,26 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # Stack the bases before doing the tp with the weights
     stacked_convs = torch.stack(bases, dim=2)
-    group_iC = weights.shape[1]
+    group_input_channels = weights.shape[1]
 
     stacked_convs = stacked_convs.reshape(
         stacked_convs.shape[0], groups, group_iC,
         *stacked_convs.shape[2:])
 
     output_channels = []
-    for i, w in enumerate(weights):
-        input_idx = (i % groups) * group_iC
-        cv = stacked_convs[:, input_idx, ...]
+    for i, weight in enumerate(weights):
+        input_idx = (i % groups) * group_input_channels
+        conv = stacked_convs[:, input_idx, ...]
         # Contract everything except the first two dims.
-        r = torch.tensordot(w, cv, dims=[(0, 1), (1, 2)])
-        output_channels.append(r)
+        res = torch.tensordot(weight, conv, dims=[(0, 1), (1, 2)])
+        output_channels.append(res)
 
     result = torch.stack(output_channels, dim=1)
     assert (result.shape == output_shape).all()
     return result
 
 
-def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
+def crop(input_: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
     """Crop the tensor using an array of values.
 
     Opposite operation of pad.
@@ -222,18 +288,18 @@ def crop(x: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
 
     # Construct the bounds and padding list of tuples
     slices = [...]
-    for pl, pr in crop:
-        pl = pl if pl != 0 else None
-        pr = -pr if pr != 0 else None
-        slices.append(slice(pl, pr, None))
+    for left, right in crop:
+        left = left if left != 0 else None
+        right = -right if right != 0 else None
+        slices.append(slice(left, pright, None))
 
     slices = tuple(slices)
 
     # Apply the crop and return
-    return x[slices]
+    return input_[slices]
 
 
-def translate(x: torch.Tensor, shift: Tuple[int, ...],
+def translate(input_: torch.Tensor, shift: Tuple[int, ...],
               mode='constant', value=0) -> torch.Tensor:
     """Translate the input.
 
@@ -250,19 +316,19 @@ def translate(x: torch.Tensor, shift: Tuple[int, ...],
     # Construct the bounds and padding list of tuples
     paddings = []
     slices = [...]
-    for s in reversed(shift):
-        shift = abs(s)
+    for axis_shift in reversed(shift):
+        abs_shift = abs(axis_shift)
         if s > 0:
-            paddings.append(shift)
+            paddings.append(abs_shift)
             paddings.append(0)
-            slices.insert(1, slice(0, -shift if shift else None))
+            slices.insert(1, slice(0, -abs_shift if abs_shift else None))
         else:
             paddings.append(0)
-            paddings.append(shift)
-            slices.insert(1, slice(shift, None))
+            paddings.append(abs_shift)
+            slices.insert(1, slice(abs_shift, None))
 
     slices = tuple(slices)
-    y = torch.nn.functional.pad(x, paddings, mode=mode, value=value)
+    output = torch.nn.functional.pad(input_, paddings, mode=mode, value=value)
 
     # Apply the crop and return
-    return y[slices]
+    return output[slices]
