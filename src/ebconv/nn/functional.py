@@ -33,24 +33,23 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
     for dweights, dstride, ddilation in zip(*params):
         # The iC changes to oC after the first conv
         input_channels = conv.shape[1]
+        spatial_shape = conv.shape[2:]
 
         # Store the original spatial shape of the input tensor.
         width = dweights.shape[-1]
         width = ddilation * (width - 1) + 1
 
         # Extend the input to fit the striding.
-        spatial_shape = conv.shape[2:]
         axis_size = spatial_shape[-1]
         nshifts = axis_size // dstride
-        oasize = np.floor((axis_size - width) / dstride + 1).astype(int)
+        new_axis_size = dstride * (nshifts + 1)
+        conv = torch.nn.functional.pad(
+            conv, (0, new_axis_size - axis_size))
 
-        # Required excess to make the stride "stationary"
-        # i.e. the convolution for the next row starts correctly.
-        excess = dstride * (nshifts + 1) - axis_size
-        conv = torch.nn.functional.pad(conv, (0, excess))
-        new_oasize = np.floor(
-            (conv.shape[-1] - width) / dstride + 1).astype(int)
-        crop_ = new_oasize - oasize
+        # Extending the input to fit the striding might
+        # have introduced output elements to be cropped.
+        output_axis_size = int((axis_size - width) / dstride + 1)
+        crop_ = int(nshifts - width / dstride + 2) - output_axis_size
 
         # Compute the theoretical ddconvolution
         # Perform the 1d convolution
@@ -108,10 +107,10 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
                      stride: Union[int, Tuple[int, ...]] = 1,
                      padding: Union[int, Tuple[int, ...]] = 0,
                      dilation: Union[int, Tuple[int, ...]] = 1,
-                     groups: int = 1, prefer_native: bool = False):
+                     groups: int = 1, use_native: bool = True):
     """Compute a separable d-dimensional convolution.
 
-    prefer_native specifies if it's preferred to use the original
+    use_native specifies if it's preferred to use the original
     torch.nn.functional.conv<d>d backends which support the convolution
     up to three dimensional.
     """
@@ -122,7 +121,7 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
     assert spatial_dims == len(weight)
     assert groups > 0
 
-    if prefer_native and spatial_dims in _D2F:
+    if use_native and spatial_dims in _D2F:
         return _conv_separable_native(
             input_, weight, bias=bias, stride=stride,
             padding=padding, dilation=dilation, groups=groups)

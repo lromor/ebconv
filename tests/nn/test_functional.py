@@ -118,12 +118,12 @@ D2I = {
 @pytest.mark.parametrize('stride', [1, 2, 3])
 @pytest.mark.parametrize('dim', [1, 2, 3])
 @pytest.mark.parametrize('w_size', [1, 2])
-@pytest.mark.parametrize('iC, oC, groups', [
+@pytest.mark.parametrize('ic, oc, groups', [
     (6, 4, 2),
     (3, 3, 1),
     (3, 3, 3),
 ])
-def test_convdd_separable(iC, oC, groups, w_size, dim, stride,
+def test_convdd_separable(ic, oc, groups, w_size, dim, stride,
                           padding, dilation):
     """Test consistent values with torch.
 
@@ -131,11 +131,11 @@ def test_convdd_separable(iC, oC, groups, w_size, dim, stride,
     """
     batch = 3
     isize = np.power(2, np.arange(3, 3 + dim))
-    input_ = torch.rand(batch, iC, *isize)
+    input_ = torch.rand(batch, ic, *isize)
 
     weight = []
     for i in range(dim):
-        weight.append(torch.rand(oC, iC // groups, w_size + i))
+        weight.append(torch.rand(oc, ic // groups, w_size + i))
 
     # Compute tensordot using einsum.
     einsum_eq = ['ij' + D2I[d] for d in range(dim)]
@@ -152,10 +152,10 @@ def test_convdd_separable(iC, oC, groups, w_size, dim, stride,
         dilation=dilation, groups=groups)
     output_native = convdd_separable(
         input_, weight, stride=stride, padding=padding, dilation=dilation,
-        groups=groups, prefer_native=True)
+        groups=groups, use_native=True)
     assert torch.allclose(torch_output, output_native)
 
     output = convdd_separable(
         input_, weight, stride=stride, padding=padding, dilation=dilation,
-        groups=groups, prefer_native=False)
+        groups=groups, use_native=False)
     assert torch.allclose(torch_output, output)
