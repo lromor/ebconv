@@ -6,14 +6,14 @@ classes.
 
 from typing import Iterable, List, Tuple, TypeVar, Union
 
-from ebconv.utils import tensordot
-
 import numpy as np
 
 from scipy.interpolate import BSpline as _BSpline
 
+from ebconv.utils import tensordot
 
-def uniform_knots(n: int) -> np.ndarray:
+
+def uniform_knots(k: int) -> np.ndarray:
     """Generate uniform and centered knots.
 
     Args:
@@ -26,9 +26,9 @@ def uniform_knots(n: int) -> np.ndarray:
         RuntimeError: if n < 2
 
     """
-    if n < 0:
+    if k < 0:
         raise RuntimeError('Knots order n must be >= 0.')
-    knots = np.arange(0, n + 2) - (n + 1) / 2
+    knots = np.arange(0, k + 2) - (k + 1) / 2
     return knots
 
 
@@ -48,9 +48,12 @@ class UnivariateBSplineElement():
 
         """
         self._b = _BSpline.basis_element(knots, extrapolate=False)
+
+        # Spline knots
+        self.knots = self._b.t
+
+        # Spline order
         self.k = self._b.k
-        self.c = self._b.c
-        self.t = self._b.t
 
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """Sample the bspline element in the domain."""
@@ -80,7 +83,7 @@ class BSplineElement():
 
     def knots(self) -> List[np.ndarray]:
         """Return a list of knots for every dimension."""
-        return [b.t[b.k:-b.k if b.k != 0 else None]
+        return [b.knots[b.k:-b.k if b.k != 0 else None]
                 for b in self._univariate_splines]
 
     def is_cardinal(self) -> bool:
@@ -99,9 +102,9 @@ class BSplineElement():
 
     @classmethod
     def create_cardinal(
-            cls, center: Union[Tuple[float, ...], float] = 0.0,
-            scaling: Union[Tuple[float, ...], float] = 1.0,
-            order: Union[Tuple[int, ...], int] = 3) -> _TBSplineElementBase:
+            cls, c: Union[Tuple[float, ...], float] = 0.0,
+            s: Union[Tuple[float, ...], float] = 1.0,
+            k: Union[Tuple[int, ...], int] = 3) -> _TBSplineElementBase:
         """Return a cardinal bspline instance.
 
         Args:
@@ -112,15 +115,15 @@ class BSplineElement():
            BSplineElementBase child instance with uniform knots.
 
         """
-        if not isinstance(center, Iterable):
-            center = (center,)
-        if not isinstance(scaling, Iterable):
-            scaling = (scaling,)
-        if not isinstance(order, Iterable):
-            order = (order,)
+        if not isinstance(c, Iterable):
+            c = (c,)
+        if not isinstance(s, Iterable):
+            s = (s,)
+        if not isinstance(k, Iterable):
+            k = (k,)
 
-        knots = [uniform_knots(o) * s + c
-                 for o, s, c in zip(order, scaling, center)]
+        knots = [uniform_knots(k_i) * s_i + c_i
+                 for c_i, s_i, k_i in zip(c, s, k)]
         bspline = cls(knots)
         assert bspline.is_cardinal()
         return bspline

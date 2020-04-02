@@ -7,20 +7,20 @@ to debug and plot bspline kernels.
 import random
 from typing import Iterable, Tuple, TypeVar, Union
 
-from ebconv.splines import BSplineElement
-
 import numpy as np
+
+from ebconv.splines import BSplineElement
 
 
 def create_random_centers(bounds: Iterable[Tuple[float, ...]],
-                          n: int, integral_values=False):
+                          ncenters: int, integral_values=False):
     """Return n random centers within bounds."""
     # Sampler
     sampler = random.randint if integral_values else random.uniform
 
     # Generate our unique random list of coordinates
     c = set()
-    for _ in range(n):
+    for _ in range(ncenters):
         c.add(tuple(sampler(lb, ub) for lb, ub in bounds))
     c = np.array(list(c))
     return c
@@ -87,9 +87,9 @@ class CardinalBSplineKernel:
         Returns a tensor with the sampled function for each of the centers.
         """
         bases = []
-        for p in zip(self.c, self.s, self.k):
-            b = BSplineElement.create_cardinal(*p)
-            bases.append(b(*args, **kwargs))
+        for parameters in zip(self.c, self.s, self.k):
+            basis = BSplineElement.create_cardinal(*parameters)
+            bases.append(basis(*args, **kwargs))
         return np.stack(bases)
 
     def __call__(self, *args, **kwargs) -> np.ndarray:
@@ -110,13 +110,13 @@ class CardinalBSplineKernel:
         """Generate a bspline kernel with randomly positioned centers."""
         c = np.array(c)
         c = c[:, None] if len(c.shape) == 1 else c
-        n, ndims = c.shape
+        ncenters, ndims = c.shape
 
         if not isinstance(s, Iterable):
             s = float(s)
-            s = (((s,) * ndims,) * n)
+            s = (((s,) * ndims,) * ncenters)
         if not isinstance(k, Iterable):
-            k = (((k,) * ndims,) * n)
+            k = (((k,) * ndims,) * ncenters)
 
         s = np.array(s)
         s = s[:, None] if len(s.shape) == 1 else s

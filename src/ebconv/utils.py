@@ -7,14 +7,14 @@ import numpy as np
 
 def tensordot(fns):
     """Return a callable that evalautes the tensor product."""
-    def fn(*args, **kwargs):
+    def tensor_fn(*args):
         if len(args) > len(fns):
             raise TypeError('Too many arguments.')
         out = 1
-        for f, a in zip(fns, args):
-            out *= f(a)
+        for function, function_args in zip(fns, args):
+            out *= function(function_args)
         return out.T
-    return fn
+    return tensor_fn
 
 
 def conv_output_shape(ishape: Tuple[int],
@@ -54,11 +54,11 @@ def conv_output_shape(ishape: Tuple[int],
     assert ispatial_shape.shape == kspatial_shape.shape \
         == stride.shape == padding.shape == dilation.shape
 
-    sd = (ispatial_shape + 2 * padding - dilation * (kspatial_shape - 1) - 1) \
-        / stride + 1
-    sd = np.floor(sd).astype(int)
+    spatial_shape = (ispatial_shape + 2 * padding
+                     - dilation * (kspatial_shape - 1) - 1) / stride + 1
+    spatial_shape = np.floor(spatial_shape).astype(int)
 
-    return (ishape[0], wshape[0], *sd)
+    return (ishape[0], wshape[0], *spatial_shape)
 
 
 def sampling_domain(kernel_size):

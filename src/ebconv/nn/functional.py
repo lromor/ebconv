@@ -48,7 +48,8 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
         # i.e. the convolution for the next row starts correctly.
         excess = dstride * (nshifts + 1) - axis_size
         conv = torch.nn.functional.pad(conv, (0, excess))
-        new_oasize = np.floor((conv.shape[-1] - width) / dstride + 1).astype(int)
+        new_oasize = np.floor(
+            (conv.shape[-1] - width) / dstride + 1).astype(int)
         crop_ = new_oasize - oasize
 
         # Compute the theoretical ddconvolution
@@ -105,22 +106,23 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
     pad = sum(pad, ())
     input_ = torch.nn.functional.pad(input_, pad)
 
-    oC, giC = weight[0].shape[:2]
+    group_input_channels = weight[0].shape[1]
     new_ishape = input_.shape[0], groups, -1, *input_.shape[2:]
 
     # Reshape into batch, group, group filters, ...
     input_ = input_.reshape(new_ishape)
 
     # Split along the filters the weights
-    weight = [[w[:, i, ...].unsqueeze(1) for w in weight] for i in range(giC)]
+    weight = [[w[:, i, ...].unsqueeze(1) for w in weight]
+              for i in range(group_input_channels)]
     return torch.stack([
         _convdd_separable_per_filter(
             input_[:, :, i, ...], weight[i], bias, stride, dilation)
-        for i in range(giC)
+        for i in range(group_input_channels)
     ]).sum(dim=0)
 
 
-def sample_basis(spline, sx):
+def sample_basis(spline, sampling_x):
     """Sample a spline object."""
     support_bounds = spline.support_bounds()
     support_bounds = support_bounds if len(support_bounds.shape) == 2 \
@@ -128,8 +130,8 @@ def sample_basis(spline, sx):
 
     samples = []
     shift = []
-    for domain, (lb, ub) in zip(sx, support_bounds):
-        x = domain[(domain >= lb) & (domain <= ub)]
+    for domain, (lower, upper) in zip(sampling_x, support_bounds):
+        x = domain[(domain >= lower) & (domain <= upper)]
         if len(x) == 0:
             return torch.Tensor(), None
 
@@ -270,7 +272,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     return result
 
 
-def crop(input_: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
+def crop(input_: torch.Tensor, crop_: List[Tuple[int, ...]]) -> torch.Tensor:
     """Crop the tensor using an array of values.
 
     Opposite operation of pad.
@@ -282,13 +284,13 @@ def crop(input_: torch.Tensor, crop: List[Tuple[int, ...]]) -> torch.Tensor:
         Cropped tensor.
 
     """
-    assert len(crop) % 2 == 0
-    crop = [(crop[i], crop[i + 1]) for i in range(0, len(crop) - 1, 2)]
-    assert len(crop) == len(input_.shape) - 2
+    assert len(crop_) % 2 == 0
+    crop_ = [(crop_[i], crop_[i + 1]) for i in range(0, len(crop_) - 1, 2)]
+    assert len(crop_) == len(input_.shape) - 2
 
     # Construct the bounds and padding list of tuples
     slices = [...]
-    for left, right in crop:
+    for left, right in crop_:
         left = left if left != 0 else None
         right = -right if right != 0 else None
         slices.append(slice(left, right, None))
