@@ -85,7 +85,7 @@ def test_cbsconv1d(c, s, k, batch):
 
 def test_crop_simple():
     """Check that cropping along the two axes gives the expected result."""
-    tt_input = torch.tensor((
+    tt_input = torch.Tensor((
         (0.0, 0.0, 0.0, 0.0, 0.0),
         (0.0, 1.0, 2.0, 3.0, 0.0),
         (0.0, 4.0, 5.0, 6.0, 0.0),
@@ -94,7 +94,7 @@ def test_crop_simple():
     ))[None, None, :]
 
     assert crop(tt_input, (1, 2, 2, 1)) \
-        .equal(torch.tensor((
+        .equal(torch.Tensor((
             (2.0, 3.0),
             (5.0, 6.0),
         ))[None, None, :])
@@ -118,12 +118,12 @@ D2I = {
 @pytest.mark.parametrize('stride', [1, 2, 3])
 @pytest.mark.parametrize('dim', [1, 2, 3])
 @pytest.mark.parametrize('w_size', [1, 2])
-@pytest.mark.parametrize('ic, oc, groups', [
+@pytest.mark.parametrize('i_c, o_c, groups', [
     (6, 4, 2),
     (3, 3, 1),
     (3, 3, 3),
 ])
-def test_convdd_separable(ic, oc, groups, w_size, dim, stride,
+def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
                           padding, dilation):
     """Test consistent values with torch.
 
@@ -131,11 +131,11 @@ def test_convdd_separable(ic, oc, groups, w_size, dim, stride,
     """
     batch = 3
     isize = np.power(2, np.arange(3, 3 + dim))
-    input_ = torch.rand(batch, ic, *isize)
+    input_ = torch.rand(batch, i_c, *isize)
 
     weight = []
     for i in range(dim):
-        weight.append(torch.rand(oc, ic // groups, w_size + i))
+        weight.append(torch.rand(o_c, i_c // groups, w_size + i))
 
     # Compute tensordot using einsum.
     einsum_eq = ['ij' + D2I[d] for d in range(dim)]

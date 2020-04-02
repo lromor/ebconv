@@ -6,17 +6,17 @@ from os import path
 
 from setuptools import find_packages, setup
 
-here = path.abspath(path.dirname(__file__))
+HERE = path.abspath(path.dirname(__file__))
 
 # Get the long description from the README file
-with open(path.join(here, 'README.md'), encoding='utf-8') as f:
-    long_description = f.read()
+with open(path.join(HERE, 'README.md'), encoding='utf-8') as f:
+    LONG_DESCRIPTION = f.read()
 
 setup(
     name='ebconv',
     version='0.0.1',
     description='Library for Equivariant B-spline Convolutions.',
-    long_description=long_description,
+    long_description=LONG_DESCRIPTION,
     long_description_content_type='text/markdown',
     url='https://github.com/lromor/ebconv',
     author='Erik Bekkers, Leonardo Romor',
