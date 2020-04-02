@@ -77,19 +77,56 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
     return conv
 
 
+_D2F = {
+    1: torch.nn.functional.conv1d,
+    2: torch.nn.functional.conv2d,
+    3: torch.nn.functional.conv3d
+}
+
+
+_D2I = {
+    0: 'a',
+    1: 'b',
+    2: 'c'
+}
+
+
+def _conv_separable_native(input_, weight, *args, **kwargs):
+    spatial_dims = len(input_.shape[2:])
+
+    # Compute outer product using einsum.
+    einsum_eq = ['ij' + _D2I[dim] for dim in range(spatial_dims)]
+    einsum_eq = ','.join(einsum_eq)
+    einsum_eq += '->'
+    einsum_eq += 'ij' + ''.join([_D2I[dim] for dim in range(spatial_dims)])
+    weight = torch.einsum(einsum_eq, *weight)
+
+    return _D2F[spatial_dims](input_, weight, *args, **kwargs)
+
+
 def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
                      bias: Optional[torch.Tensor] = None,
                      stride: Union[int, Tuple[int, ...]] = 1,
                      padding: Union[int, Tuple[int, ...]] = 0,
                      dilation: Union[int, Tuple[int, ...]] = 1,
-                     groups: int = 1):
-    """Compute a separable d-dimensional convolution."""
+                     groups: int = 1, prefer_native: bool = False):
+    """Compute a separable d-dimensional convolution.
+
+    prefer_native specifies if it's preferred to use the original
+    torch.nn.functional.conv<d>d backends which support the convolution
+    up to three dimensional.
+    """
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
 
     # There should be a weight per dimension.
     assert spatial_dims == len(weight)
     assert groups > 0
+
+    if prefer_native and spatial_dims in _D2F:
+        return _conv_separable_native(
+            input_, weight, bias=bias, stride=stride,
+            padding=padding, dilation=dilation, groups=groups)
 
     weight = weight[::-1]
     if not isinstance(stride, Tuple):

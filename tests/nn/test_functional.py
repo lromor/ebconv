@@ -148,7 +148,7 @@ D2I = {
 
 @pytest.mark.parametrize('dilation', [1, 2])
 @pytest.mark.parametrize('padding', [0, 1])
-@pytest.mark.parametrize('stride', [1, 2])
+@pytest.mark.parametrize('stride', [1, 2, 3])
 @pytest.mark.parametrize('dim', [1, 2, 3])
 @pytest.mark.parametrize('w_size', [1, 2])
 @pytest.mark.parametrize('iC, oC, groups', [
@@ -180,9 +180,15 @@ def test_convdd_separable(iC, oC, groups, w_size, dim, stride,
 
     # Function to test against
     tconv = D2F[dim]
-    torch_output = tconv(input_, torch_weight, stride=stride,
-                         padding=padding, dilation=dilation, groups=groups)
-    output = convdd_separable(input_, weight, stride=stride,
-                              padding=padding, dilation=dilation,
-                              groups=groups)
+    torch_output = tconv(
+        input_, torch_weight, stride=stride, padding=padding,
+        dilation=dilation, groups=groups)
+    output_native = convdd_separable(
+        input_, weight, stride=stride, padding=padding, dilation=dilation,
+        groups=groups, prefer_native=True)
+    assert torch.allclose(torch_output, output_native)
+
+    output = convdd_separable(
+        input_, weight, stride=stride, padding=padding, dilation=dilation,
+        groups=groups, prefer_native=False)
     assert torch.allclose(torch_output, output)

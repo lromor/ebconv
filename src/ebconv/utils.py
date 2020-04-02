@@ -56,7 +56,7 @@ def conv_output_shape(ishape: Tuple[int],
 
     spatial_shape = (ispatial_shape + 2 * padding
                      - dilation * (kspatial_shape - 1) - 1) / stride + 1
-    spatial_shape = np.floor(spatial_shape).astype(int)
+    spatial_shape = spatial_shape.astype(int)
 
     return (ishape[0], wshape[0], *spatial_shape)
 
