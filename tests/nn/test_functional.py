@@ -150,12 +150,8 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
     torch_output = tconv(
         input_, torch_weight, stride=stride, padding=padding,
         dilation=dilation, groups=groups)
-    output_native = convdd_separable(
-        input_, weight, stride=stride, padding=padding, dilation=dilation,
-        groups=groups, use_native=True)
-    assert torch.allclose(torch_output, output_native)
 
     output = convdd_separable(
         input_, weight, stride=stride, padding=padding, dilation=dilation,
-        groups=groups, use_native=False)
+        groups=groups)
     assert torch.allclose(torch_output, output)
