@@ -1,16 +1,15 @@
-
-from ebconv.kernel import CardinalBSplineKernel
-from ebconv.nn.functional import cbsconv
-from ebconv.nn.functional import convdd_separable
-from ebconv.nn.functional import crop
-from ebconv.nn.functional import translate
-from ebconv.utils import sampling_domain
-
+"""Test the functional module."""
 import numpy as np
 
 import pytest
 
 import torch
+
+from ebconv.kernel import CardinalBSplineKernel
+from ebconv.nn.functional import cbsconv
+from ebconv.nn.functional import convdd_separable
+from ebconv.nn.functional import crop
+from ebconv.utils import sampling_domain
 
 
 @pytest.mark.parametrize('batch', [10])
@@ -82,38 +81,6 @@ def test_cbsconv1d(c, s, k, batch):
     torch_conv = torch.nn.functional.conv1d(input_, w_)
     cbs_conv = cbsconv(input_, (kernel_size_big,), bw_, kb.c, kb.s, kb.k)
     assert np.allclose(torch_conv, cbs_conv)
-
-
-def test_translate_simple():
-    """Check the resulting op using 2d tensor respects the specification."""
-    # Simple 2d tensor to test the shift and crop
-    tt_input = torch.tensor((
-        (0.0, 0.0, 0.0, 0.0, 0.0),
-        (0.0, 1.0, 2.0, 3.0, 0.0),
-        (0.0, 4.0, 5.0, 6.0, 0.0),
-        (0.0, 7.0, 8.0, 9.0, 0.0),
-        (0.0, 0.0, 0.0, 0.0, 0.0),
-    ))[None, None, :]
-
-    assert translate(tt_input, (1, -2), mode='constant', value=0) \
-        .equal(torch.tensor((
-            (0.0, 0.0, 0.0, 0.0, 0.0),
-            (0.0, 0.0, 0.0, 0.0, 0.0),
-            (2.0, 3.0, 0.0, 0.0, 0.0),
-            (5.0, 6.0, 0.0, 0.0, 0.0),
-            (8.0, 9.0, 0.0, 0.0, 0.0),
-        ))[None, None, :])
-
-    # There's no numpy symmetric, the closest is "reflect"
-    # which discards the border in the reflection.
-    assert translate(tt_input, (1, -2), mode='reflect') \
-        .equal(torch.tensor((
-            (2.0, 3.0, 0.0, 3.0, 2.0),
-            (0.0, 0.0, 0.0, 0.0, 0.0),
-            (2.0, 3.0, 0.0, 3.0, 2.0),
-            (5.0, 6.0, 0.0, 6.0, 5.0),
-            (8.0, 9.0, 0.0, 9.0, 8.0),
-        ))[None, None, :])
 
 
 def test_crop_simple():

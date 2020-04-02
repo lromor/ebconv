@@ -62,7 +62,6 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
         # Add at the end extra values to have the right shape
         # to remove the excess of values due to tha fake ddim
         # 1d conv.
-
         overlap_size = (width - 1) // dstride
         conv = torch.cat([conv, torch.empty(*conv.shape[:2], overlap_size)],
                          dim=-1)
