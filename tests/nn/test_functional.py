@@ -7,6 +7,7 @@ import torch
 
 from ebconv.kernel import CardinalBSplineKernel
 from ebconv.nn.functional import cbsconv
+from ebconv.nn.functional import cbspline
 from ebconv.nn.functional import convdd_separable
 from ebconv.nn.functional import crop
 from ebconv.utils import sampling_domain
@@ -155,3 +156,16 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
         input_, weight, stride=stride, padding=padding, dilation=dilation,
         groups=groups)
     assert torch.allclose(torch_output, output)
+
+
+def test_autograd_cardinalbspline():
+    """Test that the autograd for cardinalbspline."""
+    input_ = torch.arange(-10, 10, dtype=torch.double, requires_grad=False)
+    # pylint: disable=E1102
+    c = torch.tensor(-5, dtype=torch.double, requires_grad=True).reshape(1)
+    # pylint: disable=E1102
+    s = torch.tensor(20, dtype=torch.double, requires_grad=False).reshape(1)
+    k = 3
+
+    params = (input_, c, s, k)
+    torch.autograd.gradcheck(cbspline, params, eps=1e-6, atol=1e-6)

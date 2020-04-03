@@ -37,17 +37,23 @@ def square_signal(x: np.ndarray, width=1) -> np.ndarray:
     return np.heaviside(x + width / 2, 1) * np.heaviside(-x + width / 2, 1)
 
 
-class UnivariateBSplineElement():
-    """Define a univariate b-spline element."""
+_TUnivariateBSplineElement = TypeVar('TUnivariateBSplineElement',
+                                     bound='UnivariateBSplineElement')
 
-    def __init__(self, knots: np.ndarray) -> None:
+class UnivariateBSplineElement():
+    """Define a univariate b-spline element.
+
+    Wrapper class to the scipy object.
+    """
+
+    def __init__(self, basis: _TUnivariateBSplineElement) -> None:
         """Initialize a uniform b-spline element using knots.
 
         Args:
             knots: Knots that completely define the basis element.
 
         """
-        self._b = _BSpline.basis_element(knots, extrapolate=False)
+        self._b = basis
 
         # Spline knots
         self.knots = self._b.t
@@ -55,9 +61,18 @@ class UnivariateBSplineElement():
         # Spline order
         self.k = self._b.k
 
+    @classmethod
+    def from_knots(cls, knots) -> _TUnivariateBSplineElement:
+        """Create basis element from knots."""
+        return cls(_BSpline.basis_element(knots, extrapolate=False))
+
     def __call__(self, x: np.ndarray) -> np.ndarray:
         """Sample the bspline element in the domain."""
         return np.nan_to_num(self._b(x))
+
+    def derivative(self, *args, **kwargs):
+        """Return the derivative of the element."""
+        return UnivariateBSplineElement(self._b.derivative(*args, **kwargs))
 
 
 _TBSplineElementBase = TypeVar('TBSplineElementBase',
@@ -67,15 +82,20 @@ _TBSplineElementBase = TypeVar('TBSplineElementBase',
 class BSplineElement():
     """Implementation of a Univariate BSpline function."""
 
-    def __init__(self, knots: Iterable[np.ndarray]) -> None:
+    def __init__(self, splines: Iterable[UnivariateBSplineElement]) -> None:
         """Initialize a bspline element.
 
         Args:
-            knots: List of array of knots.
+            splines: Iterable of univariate bsplines.
 
         """
-        self._univariate_splines = [UnivariateBSplineElement(k) for k in knots]
+        self._univariate_splines = splines
         self._b = tensordot(self._univariate_splines)
+
+    @classmethod
+    def from_knots(cls, knots: Iterable[np.ndarray]) -> _TBSplineElementBase:
+        """Construct the Bspline from the knots."""
+        return cls([UnivariateBSplineElement.from_knots(k) for k in knots])
 
     def dimensionality(self) -> int:
         """Return the number of dimensions of the basis element."""
@@ -99,6 +119,11 @@ class BSplineElement():
     def support_bounds(self) -> np.ndarray:
         """Return the non zero interval of the function."""
         return np.array(tuple((k[0], k[-1]) for k in self.knots())).squeeze()
+
+    def derivative(self) -> _TBSplineElementBase:
+        """Returns the corresponding derivative of the bspline."""
+        dsplines = [spline.derivative() for spline in self._univariate_splines]
+        return BSplineElement(dsplines)
 
     @classmethod
     def create_cardinal(
@@ -124,7 +149,7 @@ class BSplineElement():
 
         knots = [uniform_knots(k_i) * s_i + c_i
                  for c_i, s_i, k_i in zip(c, s, k)]
-        bspline = cls(knots)
+        bspline = cls.from_knots(knots)
         assert bspline.is_cardinal()
         return bspline
 

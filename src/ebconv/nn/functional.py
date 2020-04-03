@@ -120,6 +120,39 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
     ]).sum(dim=0)
 
 
+class CardinalBSpline(torch.autograd.Function):
+    """Autograd for sampling a cardinal bspline."""
+
+    @staticmethod
+    # pylint: disable=arguments-differ
+    def forward(ctx, input_, c, s, k):
+        # ctx is a context object that can be used to stash information
+        # for backward computation
+        c = c.cpu().detach().numpy()
+        s = s.cpu().detach().numpy()
+        spline = BSplineElement.create_cardinal(c, s, k)
+        dspline = spline.derivative()
+        x = input_.numpy()
+        y = spline(x)
+        ctx.derivative = torch.Tensor(dspline(x))
+        # pylint: disable=E1102
+        ctx.s = torch.tensor(s, dtype=torch.double)
+        # pylint: disable=E1102
+        return torch.tensor(y, dtype=torch.double)
+
+    @staticmethod
+    # pylint: disable=arguments-differ
+    def backward(ctx, grad_output):
+        c_grad = -ctx.derivative * grad_output
+        s_grad = -ctx.derivative / (ctx.s * ctx.s) * grad_output
+        return None, c_grad, s_grad, None
+
+
+def cbspline(*args, **kwargs):
+    """Public interface to the functional to sample univariate bspines."""
+    return CardinalBSpline.apply(*args, **kwargs)
+
+
 def sample_basis(spline, sampling_x):
     """Sample a spline object."""
     support_bounds = spline.support_bounds()
