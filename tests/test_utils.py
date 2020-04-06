@@ -1,33 +1,10 @@
 """Tests of the ebconv.utils module."""
 
-from ebconv.utils import conv_output_shape
-from ebconv.utils import tensordot
-
-import numpy as np
-
 import pytest
 
 import torch
 
-
-def test_tendordot():
-    """Value of tensor product of the callables.
-
-    We should have the same values as manually sampling the functions
-    separately and then performing np.tensordot().
-    """
-    list_fn = [np.cos, np.sin]
-    x = np.linspace(-np.pi, np.pi) * 2 + 3
-    y = np.linspace(-np.pi, np.pi)
-
-    xx, yy = np.meshgrid(x, y)
-    fn = tensordot(list_fn)
-    zf = fn(xx, yy)
-
-    zx = np.cos(x)
-    zy = np.sin(y)
-    zn = np.tensordot(zx, zy, axes=0)
-    assert np.allclose(zf, zn)
+from ebconv.utils import convolution_output_shape
 
 
 @pytest.mark.parametrize('dilation', [(1, 2, 3), 2])
@@ -48,5 +25,5 @@ def test_3d_conv_output_shape(ishape, wshape, stride,
     out_shape = torch.nn.functional.conv3d(
         input_, weights, stride=stride, padding=padding,
         dilation=dilation, groups=groups).shape
-    assert out_shape == conv_output_shape(ishape, wshape, stride,
-                                          padding, dilation)
+    assert out_shape == convolution_output_shape(
+        ishape, wshape, stride, padding, dilation)

@@ -6,82 +6,12 @@ import pytest
 import torch
 
 from ebconv.kernel import CardinalBSplineKernel
+from ebconv.kernel import create_random_centers
 from ebconv.nn.functional import cbsconv
-from ebconv.nn.functional import cbspline
+from ebconv.nn.functional import UnivariateCardinalBSpline
 from ebconv.nn.functional import convdd_separable
 from ebconv.nn.functional import crop
-from ebconv.utils import sampling_domain
-
-
-@pytest.mark.parametrize('batch', [10])
-@pytest.mark.parametrize('k', [1, 2, 3])
-@pytest.mark.parametrize('s', [0.5, 1.3])
-@pytest.mark.parametrize('c', [
-    (0.0,), (-6.9,), (-0.3,), (1.3,), (2.9,),
-    (-5, 4.6, 0.9, 10.3),
-    (10.4, 3.7, -5.4),
-])
-def test_cbsconv1d(c, s, k, batch):
-    """Test the 1d numerical solution of bspline conv.
-
-    Perform a basis check for a simple 1d signal
-    with different shifts and sizes with a specified
-    set of centers.
-    """
-    kb = CardinalBSplineKernel.create(c=c, s=s, k=k)
-
-    # First we test the behavior using of the exact size
-    # of the smallest centered region.
-
-    # Sample the smallest centered region containing all the non-zero
-    # values of the kernel.
-    kernel_size = int(kb.centered_region().round())
-    x = sampling_domain(kernel_size)
-    bases = kb(x)
-    w = np.random.rand(*np.array(c).shape)
-    kw = np.tensordot(w, bases, axes=1)
-    bw_ = torch.Tensor(w)[None, None, :]
-
-    # kernel size > input_size
-    with pytest.raises(RuntimeError):
-        input_ = torch.rand((batch, 1, kernel_size - 1))
-        cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
-
-    # kernel size == input size
-    input_ = torch.rand(batch, 1, kernel_size)
-    w_ = torch.Tensor(kw)[None, None, :]
-    torch_conv = torch.nn.functional.conv1d(input_, w_)
-    cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
-    assert np.allclose(torch_conv, cbs_conv)
-
-    # kernel_size * 2 == input_size
-    input_ = torch.rand(batch, 1, kernel_size * 2)
-    torch_conv = torch.nn.functional.conv1d(input_, w_)
-    cbs_conv = cbsconv(input_, (kernel_size,), bw_, kb.c, kb.s, kb.k)
-    assert np.allclose(torch_conv, cbs_conv)
-
-    # Then we test custom sizes of the kernel.
-    # First we start with a smaller version
-    kernel_size_small = int(round(kernel_size / 2)) + 1
-    x_small = sampling_domain(kernel_size_small)
-    bases = kb(x_small)
-    kw = np.tensordot(w, bases, axes=1)
-    w_ = torch.Tensor(kw)[None, None, :]
-    bw_ = torch.Tensor(w)[None, None, :]
-    torch_conv = torch.nn.functional.conv1d(input_, w_)
-    cbs_conv = cbsconv(input_, (kernel_size_small,), bw_, kb.c, kb.s, kb.k)
-    assert np.allclose(torch_conv, cbs_conv)
-
-    # then with a bigger version.
-    kernel_size_big = int(round(kernel_size * 2))
-    x_big = sampling_domain(kernel_size_big)
-    bases = kb(x_big)
-    kw = np.tensordot(w, bases, axes=1)
-    w_ = torch.Tensor(kw)[None, None, :]
-    bw_ = torch.Tensor(w)[None, None, :]
-    torch_conv = torch.nn.functional.conv1d(input_, w_)
-    cbs_conv = cbsconv(input_, (kernel_size_big,), bw_, kb.c, kb.s, kb.k)
-    assert np.allclose(torch_conv, cbs_conv)
+from ebconv.kernel import sampling_domain
 
 
 def test_crop_simple():
@@ -158,14 +88,96 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
     assert torch.allclose(torch_output, output)
 
 
-def test_autograd_cardinalbspline():
-    """Test that the autograd for cardinalbspline."""
+@pytest.mark.parametrize('k', [2, 3])
+@pytest.mark.parametrize('s', [0.1, 1, 2])
+@pytest.mark.parametrize('c', [0, 0.3, -5])
+def test_autograd_univariate_cardinalbspline(c, s, k):
+    """Test that the autograd for cardinalbspline.
+
+    Notice the for k = 0,1 the splines are not differentiable.
+    """
     input_ = torch.arange(-10, 10, dtype=torch.double, requires_grad=False)
     # pylint: disable=E1102
-    c = torch.tensor(-5, dtype=torch.double, requires_grad=True).reshape(1)
+    c = torch.tensor(c, dtype=torch.double, requires_grad=True).reshape(1)
     # pylint: disable=E1102
-    s = torch.tensor(20, dtype=torch.double, requires_grad=False).reshape(1)
-    k = 3
+    s = torch.tensor(s, dtype=torch.double, requires_grad=False)
 
     params = (input_, c, s, k)
-    torch.autograd.gradcheck(cbspline, params, eps=1e-6, atol=1e-6)
+    torch.autograd.gradcheck(UnivariateCardinalBSpline.apply,
+                             params, eps=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize('dilation', [1, 2, 3])
+@pytest.mark.parametrize('padding', [0, 1])
+@pytest.mark.parametrize('stride', [1])
+@pytest.mark.parametrize('k', [2, 3])
+@pytest.mark.parametrize('dim', [1, 2, 3])
+@pytest.mark.parametrize('i_c,o_c,groups', [
+    (6, 4, 2),
+    (3, 3, 1),
+    (3, 3, 3),
+])
+def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
+    """Test the cbsconv torch functional."""
+    # Extra params
+    batch = 3
+    n_c = 7
+    input_min_size = 20
+    kernel_min_size = 7
+    input_spatial_shape = tuple(input_min_size + i * 3 for i in range(dim))
+    kernel_size = tuple(kernel_min_size + i for i in range(dim))
+
+    # Generate a random set of centers/scalings per group.
+    group_input_channels = i_c // groups
+    group_output_channels = o_c // groups
+    group_total = group_input_channels * group_output_channels
+
+    centers = []
+    scalings = []
+    weights = []
+    virtual_weights = []
+    for _ in range(groups):
+        g_centers = create_random_centers(kernel_size, n_c)
+        g_scalings = torch.rand(n_c, dim) * 3 + 0.5
+        kernel = CardinalBSplineKernel.create(
+            c=g_centers.numpy(), s=g_scalings.numpy(), k=k)
+
+        sampling = np.meshgrid(*[sampling_domain(k_s) for k_s in kernel_size],
+                               indexing='ij')
+        bases = kernel(*sampling)
+        g_weights = np.random.rand(group_total, n_c)
+        v_w = np.concatenate(
+            [np.tensordot(weight, bases, axes=1)
+             for weight in g_weights]
+        ).reshape(group_output_channels, group_input_channels, *kernel_size)
+        centers.append(g_centers.reshape(1, n_c, dim))
+        scalings.append(g_scalings.reshape(1, n_c, dim))
+
+        weights.append(
+            torch.from_numpy(g_weights).reshape(
+                group_output_channels, group_input_channels, n_c))
+
+        virtual_weights.append(torch.from_numpy(v_w))
+
+    centers = torch.cat(centers).float()
+    centers.requires_grad = True
+    scalings = torch.cat(scalings).float()
+    scalings.requires_grad = True
+    weights = torch.cat(weights).float()
+    weights.requires_grad = True
+    virtual_weights = torch.cat(virtual_weights).float()
+    virtual_weights.requires_grad = True
+
+    # Create the input
+    input_ = torch.rand(batch, i_c, *input_spatial_shape)
+
+    # Function to test against
+    tconv = D2F[dim]
+    torch_output = tconv(
+        input_, virtual_weights, stride=stride, padding=padding,
+        dilation=dilation, groups=groups)
+
+    output = cbsconv(input_, kernel_size, weights, centers, scalings, k,
+                     stride=stride, padding=padding,
+                     dilation=dilation, groups=groups)
+    assert torch.allclose(torch_output, output)

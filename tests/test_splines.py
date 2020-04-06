@@ -1,24 +1,25 @@
 """Test of the bsplines module."""
 
-import ebconv
-from ebconv.splines import BSplineElement
-
 import numpy as np
 
 import pytest
+
+from ebconv.splines import BSplineElement
+from ebconv.splines import uniform_knots
+from ebconv.splines import square_signal
 
 
 TEST_SPLINE_ORDERS = [3, 5, 11]
 
 
-@pytest.mark.parametrize('n', TEST_SPLINE_ORDERS)
-def test_uniform_knots(n):
+@pytest.mark.parametrize('k', TEST_SPLINE_ORDERS)
+def test_uniform_knots(k):
     """Check that the number of knots satisfies the relations |k| = |n| + 2."""
-    k = ebconv.splines.uniform_knots(n)
-    assert np.mean(k) == 0
-    assert len(k) == n + 2
+    knots = uniform_knots(k)
+    assert np.mean(knots) == 0
+    assert len(knots) == k + 2
 
-    spacing = np.ediff1d(k)
+    spacing = np.ediff1d(knots)
     assert (spacing == np.ones_like(spacing)).all()
 
 
@@ -33,13 +34,13 @@ def test_cardinal_bspline1d(c, s, k, epsilon):
     k_next = bspline_next.knots()[0]
 
     # Create the domain.
-    lb, ub = k_next[0], k_next[-1]
+    lower, upper = k_next[0], k_next[-1]
     x, step = np.linspace(
-        lb, ub, int(np.ceil((ub - lb) * 2 / (s * epsilon))), retstep=True)
+        lower, upper, int(np.ceil((upper - lower) * 2 / (s * epsilon))), retstep=True)
 
     # Check that we can build n + 1 from n using convolution.
     yprev = bspline_prev(x)
-    square = ebconv.splines.square_signal((x - c) / s)
+    square = square_signal((x - c) / s)
     yconv = np.convolve(yprev, square, mode='same') * step / s
     yrec = bspline_next(x)
     assert np.allclose(yconv, yrec, atol=epsilon)

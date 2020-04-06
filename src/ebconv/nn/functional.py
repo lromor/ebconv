@@ -1,4 +1,4 @@
-"""Definition of main workhorse functions made for pytorch."""
+from collections import defaultdict
 
 from typing import Iterable, List, Optional, Tuple, Union
 
@@ -7,8 +7,8 @@ import numpy as np
 import torch
 
 from ebconv.splines import BSplineElement
-from ebconv.utils import conv_output_shape
-from ebconv.utils import sampling_domain
+from ebconv.utils import convolution_output_shape
+from ebconv.kernel import sampling_domain
 
 
 def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
@@ -120,7 +120,7 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
     ]).sum(dim=0)
 
 
-class CardinalBSpline(torch.autograd.Function):
+class UnivariateCardinalBSpline(torch.autograd.Function):
     """Autograd for sampling a cardinal bspline."""
 
     @staticmethod
@@ -128,80 +128,134 @@ class CardinalBSpline(torch.autograd.Function):
     def forward(ctx, input_, c, s, k):
         # ctx is a context object that can be used to stash information
         # for backward computation
-        c = c.cpu().detach().numpy()
-        s = s.cpu().detach().numpy()
-        spline = BSplineElement.create_cardinal(c, s, k)
+        c_n = c.item()
+        s_n = s.item()
+        x_n = input_.numpy()
+
+        spline = BSplineElement.create_cardinal(c_n, s_n, k)
         dspline = spline.derivative()
-        x = input_.numpy()
-        y = spline(x)
-        ctx.derivative = torch.Tensor(dspline(x))
+
         # pylint: disable=E1102
-        ctx.s = torch.tensor(s, dtype=torch.double)
+        ctx.s = s
+
+        y = spline(x_n)
         # pylint: disable=E1102
-        return torch.tensor(y, dtype=torch.double)
+        ctx.derivative = torch.tensor(dspline(x_n), dtype=input_.dtype)
+        # pylint: disable=E1102
+        return torch.tensor(y, dtype=input_.dtype)
 
     @staticmethod
     # pylint: disable=arguments-differ
     def backward(ctx, grad_output):
+        if ctx.derivative is None:
+            return (None,) * 4
+
         c_grad = -ctx.derivative * grad_output
         s_grad = -ctx.derivative / (ctx.s * ctx.s) * grad_output
         return None, c_grad, s_grad, None
 
 
-def cbspline(*args, **kwargs):
+_KOptionalType = Union[int, Iterable[Tuple[int, ...]]]
+
+
+def cbspline(sampling_x: torch.Tensor, c: torch.Tensor, s: torch.Tensor,
+             k: _KOptionalType) -> List[torch.Tensor]:
     """Public interface to the functional to sample univariate bspines."""
-    return CardinalBSpline.apply(*args, **kwargs)
+    return [UnivariateCardinalBSpline.apply(x, ci, si, ki)
+            for x, ci, si, ki in zip(sampling_x, c, s, k)]
 
 
-def sample_basis(spline, sampling_x):
-    """Sample a spline object."""
-    support_bounds = spline.support_bounds()
-    support_bounds = support_bounds if len(support_bounds.shape) == 2 \
-        else support_bounds[None, :]
 
-    samples = []
-    shift = []
-    for domain, (lower, upper) in zip(sampling_x, support_bounds):
-        x = domain[(domain >= lower) & (domain <= upper)]
-        if len(x) == 0:
-            return torch.Tensor(), None
+class SplineWeightsHashing():
+    """Class to define how to has the sampling of the bsplines."""
+    def __init__(self, spline_weights: Iterable[torch.Tensor]) -> None:
+        self.l_t = spline_weights
 
-        # Sample the spline over x.
-        spline_w = torch.Tensor(spline(x))
-        new_center = int(np.floor(np.mean(x)))
-        samples.append(spline_w)
-        shift.append(new_center)
-    return tuple(samples), tuple(shift)
+    def __hash__(self):
+        return hash(tuple(tuple(w_i.data.numpy()) for w_i in self.l_t))
+
+
+def _cbsconv_params(input_, output, kernel_x, weights, c, s, k, dilation):
+    """Precompute the list of parameters required for each conv.
+
+    Should return a list with each item:
+    spline samples, input slice, weights and shifts.
+    """
+    assert c.shape == s.shape
+    n_c = weights.shape[-1]
+    new_shape = (-1, len(input_.shape[3:]))
+
+    total_c = c.reshape(new_shape)
+    total_s = s.reshape(new_shape)
+
+    weights_map = defaultdict(lambda: (set(), []))
+    for i, (b_c, b_s) in enumerate(zip(total_c, total_s)):
+        # For each dimension, crop the sampling values to fit
+        # only the support of the spline.
+        bounds = BSplineElement.create_cardinal(
+            b_c.data.numpy(), b_s.data.numpy(), k
+        ).support_bounds().reshape(-1, 2)
+
+        # Select only the part of the domain that intesects with the
+        # support.
+        spline_x = [d_x[(d_x >= l_b) & (d_x <= u_b)]
+                    for d_x, (l_b, u_b) in zip(kernel_x, bounds)]
+
+        if sum([len(s_x) == 0 for s_x in spline_x]) > 0:
+            continue
+
+        # Sample the torch weights carrying the gradient of c and s.
+        w_t = cbspline(spline_x, b_c, b_s, k)
+
+        # Calculate new shift (from left)
+        shift = [ddilation * len(torch.where(d_x < s_x[0])[0])
+                 for d_x, s_x, ddilation in zip(kernel_x, spline_x, dilation)]
+
+        # Make the weights hashable.
+        hashable_weights = SplineWeightsHashing(w_t)
+        group_index = i // n_c
+        n_index = i % n_c
+        g_set, shifts_and_weights = weights_map[hashable_weights]
+        g_set.add(group_index)
+        shifts_and_weights.append(
+            (group_index, shift, weights[group_index, ..., n_index]))
+
+    return [(key.l_t, sorted(i_set), shifts_and_weights)
+            for key, (i_set, shifts_and_weights) in weights_map.items()]
 
 
 def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
-            weights: torch.Tensor, c: np.ndarray,
-            s: np.ndarray, k: Iterable[Tuple[int, ...]],
-            bias=None, stride=1, padding=0, dilation=1,
-            groups=1) -> torch.Tensor:
+            weights: torch.Tensor, c: torch.Tensor,
+            s: torch.Tensor, k: int,
+            bias: Optional[torch.Tensor] = None,
+            stride: Union[int, Tuple[int, ...]] = 1,
+            padding: Union[int, Tuple[int, ...]] = 0,
+            dilation: Union[int, Tuple[int, ...]] = 1,
+            groups: int = 1) -> torch.Tensor:
     """Compute a bspline separable convolution.
 
     input.shape = batch, iC, iX, iY, iZ, ...
     kernel_size.shape = kH, kW, kD, ...
     weights.shape = oC, iC / groups, nc
-    c.shape = nc, idim
-    s.shape = nc, idim
-    k.shape = nc, idim
+    c.shape = groups, nc, idim
+    s.shape = groups, nc, idim
 
-    For now we only allow the weights to be multichannel.
-    Ideally we might want to have a different number of
-    bases parameters per channel.
-    For now it's possible to do that
-    by manually generating more parameters since no
-    optimization is yet available for the multichannel
-    convolution. For now we ignore the gradient part
-    of the parameters, making this function unsuitable
-    for training.
+    The group notion is different from the usual torch one.
+    For each group, we require the same number of basis parameters
+    and values (c,s,k) across the filters. The weight though can differ
+    both group and filter wise.
     """
-    output_channels, input_channels = weights.shape[0], weights.shape[1]
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
-    k = np.array(k)
+    batch = input_.shape[0]
+    input_channels = input_.shape[1]
+    output_channels, group_ic = weights.shape[0], weights.shape[1]
+    n_c = weights.shape[-1]
+    dtype = input_.dtype
+    group_oc = output_channels // groups
+
+    if not isinstance(k, Iterable):
+        k = ((k,) * spatial_dims)
 
     if not isinstance(stride, Tuple):
         stride = ((stride,) * spatial_dims)
@@ -217,93 +271,81 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
                            'input size')
 
     # Output tensor shape.
-    output_shape = np.array(conv_output_shape(
+    output_shape = np.array(convolution_output_shape(
         input_.shape, (output_channels, input_channels, *kernel_size),
         stride=stride, padding=padding,
         dilation=dilation))
+    output_spatial_shape = output_shape[2:]
+
+    # Add the padding
+    pad = [(p, p) for p in padding]
+    pad = sum(pad, ())
+    input_ = torch.nn.functional.pad(input_, pad)
+    spatial_shape = input_.shape[2:]
 
     # Sampling domain.
-    sampling_x = [sampling_domain(s) for s in kernel_size]
+    kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype)
+                for s in kernel_size]
 
-    # List of weights of the bases for which
-    # the support is contained in the sampling region
-    # of the kernel
-    relevant_weights = []
+    input_ = input_.reshape(
+        batch, groups, group_ic, *spatial_shape)
+    weights = weights.reshape(
+        groups, group_oc, group_ic, n_c)
+    output = torch.zeros(
+        batch, groups, group_oc, *output_spatial_shape)
 
-    # Dict of cached dd convolutions.
-    # This is a light optimization that can be
-    # useful in case of identical basis functions with identical
-    # decimal centers.
-    cached_convs = {}
-    bases = []
-    for i, (spline_c, spline_s, spline_k) in enumerate(zip(c, s, k)):
-        # Sample the basis function and check if it's inside the
-        # sampling domain.
-        spline = BSplineElement.create_cardinal(spline_c, spline_s, spline_k)
-        spline_w, shift = sample_basis(spline, sampling_x)
+    # Presample the bsplines weights.
+    bases_convs_params = _cbsconv_params(
+        input_, output, kernel_x, weights, c, s, k, dilation)
 
-        # Skip this convolution, it's not inside the sampling
-        # region.
-        if len(spline_w) == 0:
-            continue
+    for spline_ws, input_indices, shifts_and_weights in bases_convs_params:
+        g2i = {g: i for i, g in enumerate(input_indices)}
+        b_input = input_[:, input_indices, ...]
+        b_input = b_input.reshape(batch, -1, *spatial_shape)
+        b_groups = len(g2i)
 
-        # For each center convolve w.r.t the input
-        if spline_w in cached_convs:
-            conv = cached_convs[spline_w]
-        else:
-            sw_tensor = [torch.Tensor(w).reshape(1, 1, -1) for w in spline_w]
-            # Convolve the input with the basis.
-            conv = convdd_separable(input_, sw_tensor, bias, stride=stride,
-                                    padding=padding, dilation=dilation)
+        sep_conv_groups = b_input.shape[1]
 
-            # Cache it.
-            cached_convs[spline_w] = conv
+        # We need only a single output channel for the single
+        # basis weights convolution but many for each input.
+        spline_ws = [s_w.reshape(1, 1, -1).repeat(sep_conv_groups, 1, 1)
+                     for s_w in spline_ws]
+        basis_conv = convdd_separable(
+            b_input, spline_ws, stride=stride, dilation=dilation,
+            groups=sep_conv_groups)
+        b_spatial_shape = basis_conv.shape[2:]
+        # Each input is separately convolved. We now split the output
+        # per-group.
+        basis_conv = basis_conv.reshape(
+            batch, b_groups, group_ic, *b_spatial_shape)
 
-        # Crop the values.
-        spatial_os = output_shape[2:]
-        spatial_cs = np.array(conv.shape)[2:]
-        cropr = (spatial_cs - spatial_os) // 2 - shift * np.array(dilation)
-        cropl = spatial_cs - cropr - spatial_os
-        crop_ = np.array((cropl, cropr))
-        crop_ = crop_.T.flatten()
+        # Duplicate for each group output channel the result.
+        # The final shape should be batch, b_groups, group_oc, group_ic, ...
+        basis_conv = basis_conv.repeat_interleave(group_oc, dim=1)
+        basis_conv = basis_conv.reshape(
+            batch, b_groups, group_oc, group_ic, *b_spatial_shape)
 
-        conv = crop(conv, crop_)
-        assert (conv.shape == output_shape).all()
+        # Iterate through each group and perform the required crop.
+        for group_idx, shift, group_weight in shifts_and_weights:
+            b_group = g2i[group_idx]
+            group_conv = basis_conv[:, b_group, ...]
+            shape_diff = b_spatial_shape - output_spatial_shape
+            cropl = shift
+            cropr = shape_diff - cropl
+            crop_ = np.array((cropl, cropr))
+            crop_ = crop_.T.flatten()
+            group_conv = crop(group_conv, crop_)
 
-        # At this point we have for each input channel the convolution
-        # with a basis.
-        bases.append(conv)
+            # Complete the tensordot and sum over the group_ic
+            group_weight = group_weight.reshape(
+                *group_weight.shape, *((1,) * spatial_dims))
+            g_out = (group_conv * group_weight).sum(dim=2)
+            output[:, group_idx, ...] += g_out
 
-        # Add the weight
-        relevant_weights.append(weights[..., i])
-
-    if len(relevant_weights) == 0:
-        return torch.zeros(tuple(output_shape))
-
-    weights = torch.stack(relevant_weights, dim=-1)
-
-    # Stack the bases before doing the tp with the weights
-    stacked_convs = torch.stack(bases, dim=2)
-    group_input_channels = weights.shape[1]
-
-    stacked_convs = stacked_convs.reshape(
-        stacked_convs.shape[0], groups, group_input_channels,
-        *stacked_convs.shape[2:])
-
-    output_channels = []
-    for i, weight in enumerate(weights):
-        input_idx = (i % groups) * group_input_channels
-        conv = stacked_convs[:, input_idx, ...]
-        # Contract everything except the first two dims.
-        res = torch.tensordot(weight, conv, dims=[(0, 1), (1, 2)])
-        output_channels.append(res)
-
-    result = torch.stack(output_channels, dim=1)
-    assert (result.shape == output_shape).all()
-    return result
+    return output.reshape(*output_shape)
 
 
-def crop(input_: torch.Tensor, crop_: List[Tuple[int, ...]]) -> torch.Tensor:
+def crop(input_: torch.Tensor, crop_: Tuple[int, ...]) -> torch.Tensor:
     """Crop the tensor using an array of values.
 
     Opposite operation of pad.
@@ -317,7 +359,7 @@ def crop(input_: torch.Tensor, crop_: List[Tuple[int, ...]]) -> torch.Tensor:
     """
     assert len(crop_) % 2 == 0
     crop_ = [(crop_[i], crop_[i + 1]) for i in range(0, len(crop_) - 1, 2)]
-    assert len(crop_) == len(input_.shape) - 2
+    assert len(crop_) <= len(input_.shape)
 
     # Construct the bounds and padding list of tuples
     slices = [...]

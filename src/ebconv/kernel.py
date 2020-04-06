@@ -7,23 +7,31 @@ to debug and plot bspline kernels.
 import random
 from typing import Iterable, Tuple, TypeVar, Union
 
+import torch
+
 import numpy as np
 
 from ebconv.splines import BSplineElement
 
 
-def create_random_centers(bounds: Iterable[Tuple[float, ...]],
+def create_random_centers(region: Tuple[float, ...],
                           ncenters: int, integral_values=False):
-    """Return n random centers within bounds."""
+    """Return n random centers within a region of specified width."""
     # Sampler
     sampler = random.randint if integral_values else random.uniform
 
     # Generate our unique random list of coordinates
     c = set()
     for _ in range(ncenters):
-        c.add(tuple(sampler(lb, ub) for lb, ub in bounds))
+        c.add(tuple(sampler(-width / 2, width / 2) for width in region))
     c = np.array(list(c))
-    return c
+    # pylint: disable=E1102
+    return torch.tensor(c)
+
+
+def sampling_domain(kernel_size: int) -> np.ndarray:
+    """Sample over a discrete unit separated domain within two ranges a, b."""
+    return np.arange(-kernel_size / 2, kernel_size / 2) + 0.5
 
 
 _TCardinalBSplineKernel = TypeVar('TCardinalBSplineKernel',

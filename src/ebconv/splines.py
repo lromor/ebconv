@@ -10,7 +10,7 @@ import numpy as np
 
 from scipy.interpolate import BSpline as _BSpline
 
-from ebconv.utils import tensordot
+from ebconv.operator import tensordot
 
 
 def uniform_knots(k: int) -> np.ndarray:
@@ -55,9 +55,6 @@ class UnivariateBSplineElement():
         """
         self._b = basis
 
-        # Spline knots
-        self.knots = self._b.t
-
         # Spline order
         self.k = self._b.k
 
@@ -66,13 +63,18 @@ class UnivariateBSplineElement():
         """Create basis element from knots."""
         return cls(_BSpline.basis_element(knots, extrapolate=False))
 
-    def __call__(self, x: np.ndarray) -> np.ndarray:
-        """Sample the bspline element in the domain."""
-        return np.nan_to_num(self._b(x))
+    def knots(self) -> np.ndarray:
+        """Return the original set of knots."""
+        basis = self._b
+        return basis.t[basis.k:-basis.k if basis.k != 0 else None]
 
     def derivative(self, *args, **kwargs):
         """Return the derivative of the element."""
         return UnivariateBSplineElement(self._b.derivative(*args, **kwargs))
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        """Sample the bspline element in the domain."""
+        return np.nan_to_num(self._b(x))
 
 
 _TBSplineElementBase = TypeVar('TBSplineElementBase',
@@ -82,48 +84,20 @@ _TBSplineElementBase = TypeVar('TBSplineElementBase',
 class BSplineElement():
     """Implementation of a Univariate BSpline function."""
 
-    def __init__(self, splines: Iterable[UnivariateBSplineElement]) -> None:
+    def __init__(self, ubsplines: Iterable[UnivariateBSplineElement]) -> None:
         """Initialize a bspline element.
 
         Args:
             splines: Iterable of univariate bsplines.
 
         """
-        self._univariate_splines = splines
-        self._b = tensordot(self._univariate_splines)
+        self._ubsplines = ubsplines
+        self._b = tensordot(*self._ubsplines)
 
     @classmethod
     def from_knots(cls, knots: Iterable[np.ndarray]) -> _TBSplineElementBase:
         """Construct the Bspline from the knots."""
         return cls([UnivariateBSplineElement.from_knots(k) for k in knots])
-
-    def dimensionality(self) -> int:
-        """Return the number of dimensions of the basis element."""
-        return len(self._univariate_splines)
-
-    def knots(self) -> List[np.ndarray]:
-        """Return a list of knots for every dimension."""
-        return [b.knots[b.k:-b.k if b.k != 0 else None]
-                for b in self._univariate_splines]
-
-    def is_cardinal(self) -> bool:
-        """Return true if knots are uniformly spaced."""
-        spacing = tuple(map(np.ediff1d, self.knots()))
-        return np.array(
-            tuple(np.isclose(sp[0], sp).all() for sp in spacing)).all()
-
-    def get_order(self) -> List[int]:
-        """Return the spline order for every dimension."""
-        return [b.k for b in self._univariate_splines]
-
-    def support_bounds(self) -> np.ndarray:
-        """Return the non zero interval of the function."""
-        return np.array(tuple((k[0], k[-1]) for k in self.knots())).squeeze()
-
-    def derivative(self) -> _TBSplineElementBase:
-        """Returns the corresponding derivative of the bspline."""
-        dsplines = [spline.derivative() for spline in self._univariate_splines]
-        return BSplineElement(dsplines)
 
     @classmethod
     def create_cardinal(
@@ -152,6 +126,33 @@ class BSplineElement():
         bspline = cls.from_knots(knots)
         assert bspline.is_cardinal()
         return bspline
+
+    def derivative(self) -> _TBSplineElementBase:
+        """Returns the corresponding derivative of the bspline."""
+        dsplines = [spline.derivative() for spline in self._ubsplines]
+        return BSplineElement(dsplines)
+
+    def knots(self) -> List[np.ndarray]:
+        """Return a list of knots for every dimension."""
+        return [b.knots() for b in self._ubsplines]
+
+    def support_bounds(self) -> np.ndarray:
+        """Return the non zero interval of the function."""
+        return np.array(tuple((k[0], k[-1]) for k in self.knots())).squeeze()
+
+    def dimensionality(self) -> int:
+        """Return the number of dimensions of the basis element."""
+        return len(self._ubsplines)
+
+    def is_cardinal(self) -> bool:
+        """Return true if knots are uniformly spaced."""
+        spacing = tuple(map(np.ediff1d, self.knots()))
+        return np.array(
+            tuple(np.isclose(sp[0], sp).all() for sp in spacing)).all()
+
+    def get_order(self) -> List[int]:
+        """Return the spline order for every dimension."""
+        return [b.k for b in self._ubsplines]
 
     def _sample(self, *args, **kwargs):
         """Backend to sample the bspline."""

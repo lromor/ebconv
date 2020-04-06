@@ -5,23 +5,11 @@ from typing import Iterable, Tuple, Union
 import numpy as np
 
 
-def tensordot(fns):
-    """Return a callable that evalautes the tensor product."""
-    def tensor_fn(*args):
-        if len(args) > len(fns):
-            raise TypeError('Too many arguments.')
-        out = 1
-        for function, function_args in zip(fns, args):
-            out *= function(function_args)
-        return out.T
-    return tensor_fn
-
-
-def conv_output_shape(ishape: Tuple[int],
-                      wshape: Tuple[int],
-                      stride: Union[Tuple[int], int],
-                      padding: Union[Tuple[int], int],
-                      dilation: Union[Tuple[int], int]):
+def convolution_output_shape(
+        ishape: Tuple[int], wshape: Tuple[int],
+        stride: Union[Tuple[int], int],
+        padding: Union[Tuple[int], int],
+        dilation: Union[Tuple[int], int]):
     """Compute the final tensor shape resulting after a dd convolution.
 
     Returns the output shape of a convolution using for instance
@@ -59,8 +47,3 @@ def conv_output_shape(ishape: Tuple[int],
     spatial_shape = spatial_shape.astype(int)
 
     return (ishape[0], wshape[0], *spatial_shape)
-
-
-def sampling_domain(kernel_size):
-    """Sample over a discrete unit separated domain within two ranges a, b."""
-    return np.arange(-kernel_size / 2, kernel_size / 2) + 0.5
