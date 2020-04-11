@@ -1,3 +1,5 @@
+"""Provides a set of pytorch functionals."""
+
 from collections import defaultdict
 
 from typing import Iterable, List, Optional, Tuple, Union
@@ -168,14 +170,19 @@ def cbspline(sampling_x: torch.Tensor, c: torch.Tensor, s: torch.Tensor,
 
 class SplineWeightsHashing():
     """Class to define how to has the sampling of the bsplines."""
-    def __init__(self, spline_weights: Iterable[torch.Tensor]) -> None:
+    def __init__(self, spline_weights: Iterable[torch.Tensor],
+                 shift_stride: int) -> None:
         self.l_t = spline_weights
+        self.shift_stride = shift_stride
 
     def __hash__(self):
-        return hash(tuple(tuple(w_i.data.numpy()) for w_i in self.l_t))
+        h_1 = hash(tuple(tuple(w_i.data.numpy()) for w_i in self.l_t))
+        h_2 = hash(self.shift_stride)
+        return h_1 ^ h_2
 
 
-def _cbsconv_params(input_, output, kernel_x, weights, c, s, k, dilation):
+def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
+                    dilation, stride):
     """Precompute the list of parameters required for each conv.
 
     Should return a list with each item:
@@ -211,8 +218,11 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k, dilation):
         shift = [ddilation * len(torch.where(d_x < s_x[0])[0])
                  for d_x, s_x, ddilation in zip(kernel_x, spline_x, dilation)]
 
+        shift_stride_rem = tuple(s_h % s_t for s_h, s_t in zip(shift, stride))
+
         # Make the weights hashable.
-        hashable_weights = SplineWeightsHashing(w_t)
+        hashable_weights = SplineWeightsHashing(w_t, shift_stride_rem)
+
         group_index = i // n_c
         n_index = i % n_c
         g_set, shifts_and_weights = weights_map[hashable_weights]
@@ -220,7 +230,7 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k, dilation):
         shifts_and_weights.append(
             (group_index, shift, weights[group_index, ..., n_index]))
 
-    return [(key.l_t, sorted(i_set), shifts_and_weights)
+    return [(key.l_t, key.shift_stride, sorted(i_set), shifts_and_weights)
             for key, (i_set, shifts_and_weights) in weights_map.items()]
 
 
@@ -284,6 +294,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     spatial_shape = input_.shape[2:]
 
     # Sampling domain.
+    # pylint: disable=E1102
     kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype)
                 for s in kernel_size]
 
@@ -296,12 +307,19 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
-        input_, output, kernel_x, weights, c, s, k, dilation)
+        input_, output, kernel_x, weights, c, s, k, dilation, stride)
 
-    for spline_ws, input_indices, shifts_and_weights in bases_convs_params:
+    for spline_ws, shift_stride, input_indices,\
+        shifts_and_weights in bases_convs_params:
         g2i = {g: i for i, g in enumerate(input_indices)}
         b_input = input_[:, input_indices, ...]
         b_input = b_input.reshape(batch, -1, *spatial_shape)
+
+        # Crop the input to fit the striding.
+        crop_shift_stride = [(s_s, 0) for s_s in shift_stride]
+        crop_shift_stride = sum(crop_shift_stride, ())
+        b_input = crop(b_input, crop_shift_stride)
+
         b_groups = len(g2i)
 
         sep_conv_groups = b_input.shape[1]
@@ -330,7 +348,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             b_group = g2i[group_idx]
             group_conv = basis_conv[:, b_group, ...]
             shape_diff = b_spatial_shape - output_spatial_shape
-            cropl = shift
+            cropl = (shift - np.array(shift_stride)) // np.array(stride)
             cropr = shape_diff - cropl
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
@@ -341,7 +359,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
                 *group_weight.shape, *((1,) * spatial_dims))
             g_out = (group_conv * group_weight).sum(dim=2)
             output[:, group_idx, ...] += g_out
-
     return output.reshape(*output_shape)
 
 
