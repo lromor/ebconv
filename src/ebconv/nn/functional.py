@@ -359,7 +359,11 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
                 *group_weight.shape, *((1,) * spatial_dims))
             g_out = (group_conv * group_weight).sum(dim=2)
             output[:, group_idx, ...] += g_out
-    return output.reshape(*output_shape)
+
+    output = output.reshape(*output_shape)
+    output = output if bias is None \
+        else output + bias.reshape(1, -1, *((1,) * spatial_dims))
+    return output
 
 
 def crop(input_: torch.Tensor, crop_: Tuple[int, ...]) -> torch.Tensor:

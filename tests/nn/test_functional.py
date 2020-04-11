@@ -121,7 +121,7 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
     """Test the cbsconv torch functional."""
     # Extra params
     batch = 3
-    n_c = 7
+    n_c = 10
     input_min_size = 20
     kernel_min_size = 7
     input_spatial_shape = tuple(input_min_size + i * 3 for i in range(dim))
@@ -168,16 +168,18 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
     virtual_weights = torch.cat(virtual_weights).float()
     virtual_weights.requires_grad = True
 
+    bias = torch.rand(o_c)
+
     # Create the input
     input_ = torch.rand(batch, i_c, *input_spatial_shape)
 
     # Function to test against
     tconv = D2F[dim]
     torch_output = tconv(
-        input_, virtual_weights, stride=stride, padding=padding,
+        input_, virtual_weights, bias=bias, stride=stride, padding=padding,
         dilation=dilation, groups=groups)
 
     output = cbsconv(input_, kernel_size, weights, centers, scalings, k,
-                     stride=stride, padding=padding,
+                     bias=bias, stride=stride, padding=padding,
                      dilation=dilation, groups=groups)
     assert torch.allclose(torch_output, output)
