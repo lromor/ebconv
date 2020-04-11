@@ -107,10 +107,10 @@ def test_autograd_univariate_cardinalbspline(c, s, k):
                              params, eps=1e-6, atol=1e-6)
 
 
-@pytest.mark.parametrize('dilation', [1, 2, 3])
+@pytest.mark.parametrize('dilation', [1, 2])
 @pytest.mark.parametrize('padding', [0, 1])
-@pytest.mark.parametrize('stride', [1, 2, 3])
-@pytest.mark.parametrize('k', [2, 3])
+@pytest.mark.parametrize('stride', [1, 2])
+@pytest.mark.parametrize('k', [2])
 @pytest.mark.parametrize('dim', [1, 2, 3])
 @pytest.mark.parametrize('i_c,o_c,groups', [
     (6, 4, 2),
