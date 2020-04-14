@@ -74,6 +74,9 @@ class SplineWeightsHashing():
         h_2 = hash(self.shift_stride)
         return h_1 ^ h_2
 
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
 
 def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
                     dilation, stride):
@@ -116,7 +119,6 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
 
         # Make the weights hashable.
         hashable_weights = SplineWeightsHashing(w_t, shift_stride_rem)
-
         group_index = i // n_c
         n_index = i % n_c
         g_set, shifts_and_weights = weights_map[hashable_weights]

@@ -137,7 +137,8 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
     weights = []
     virtual_weights = []
     for _ in range(groups):
-        g_centers = create_random_centers(kernel_size, n_c)
+        g_centers = create_random_centers(
+            kernel_size, n_c, integrally_spaced=True)
         g_scalings = torch.rand(n_c, dim) * 3 + 0.5
         kernel = CardinalBSplineKernel.create(
             c=g_centers.numpy(), s=g_scalings.numpy(), k=k)

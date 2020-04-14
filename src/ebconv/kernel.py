@@ -4,8 +4,13 @@ This module provides numpy based classes and functions helpful
 to debug and plot bspline kernels.
 """
 
+import functools
+
 import random
+
 from typing import Iterable, Tuple, TypeVar, Union
+
+import warnings
 
 import torch
 
@@ -15,16 +20,27 @@ from ebconv.splines import BSplineElement
 
 
 def create_random_centers(region: Tuple[float, ...],
-                          ncenters: int, integral_values=False):
+                          ncenters: int, integrally_spaced=False,
+                          unique=False):
     """Return n random centers within a region of specified width."""
+    if functools.reduce(lambda x, y: x * y, region) < ncenters \
+       and unique and integrally_spaced:
+        warnings.warn('Number of centers is too high', RuntimeWarning)
+
+    integral_sampler = lambda width: random.choice(sampling_domain(width))
+    uniform_sampler = lambda width: random.uniform(-width / 2, width / 2)
+
     # Sampler
-    sampler = random.randint if integral_values else random.uniform
+    sampler = integral_sampler if integrally_spaced else uniform_sampler
 
     # Generate our unique random list of coordinates
-    c = set()
-    for _ in range(ncenters):
-        c.add(tuple(sampler(-width / 2, width / 2) for width in region))
-    c = np.array(list(c))
+    c = []
+    while len(c) < ncenters:
+        center = tuple(sampler(width) for width in region)
+        if unique and center in c:
+            continue
+        c.append(center)
+    c = np.array(c)
     # pylint: disable=E1102
     return torch.tensor(c)
 
