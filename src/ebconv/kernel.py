@@ -12,8 +12,6 @@ from typing import Iterable, Tuple, TypeVar, Union
 
 import warnings
 
-import torch
-
 import numpy as np
 
 from ebconv.splines import BSplineElement
@@ -40,9 +38,7 @@ def create_random_centers(region: Tuple[float, ...],
         if unique and center in c:
             continue
         c.append(center)
-    c = np.array(c)
-    # pylint: disable=E1102
-    return torch.tensor(c)
+    return np.array(c)
 
 
 def sampling_domain(kernel_size: int) -> np.ndarray:

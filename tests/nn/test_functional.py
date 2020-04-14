@@ -139,9 +139,9 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
     for _ in range(groups):
         g_centers = create_random_centers(
             kernel_size, n_c, integrally_spaced=True)
-        g_scalings = torch.rand(n_c, dim) * 3 + 0.5
+        g_scalings = np.random.rand(n_c, dim) * 3 + 0.5
         kernel = CardinalBSplineKernel.create(
-            c=g_centers.numpy(), s=g_scalings.numpy(), k=k)
+            c=g_centers, s=g_scalings, k=k)
 
         sampling = np.meshgrid(*[sampling_domain(k_s) for k_s in kernel_size],
                                indexing='ij')
@@ -151,28 +151,28 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
             [np.tensordot(weight, bases, axes=1)
              for weight in g_weights]
         ).reshape(group_output_channels, group_input_channels, *kernel_size)
-        centers.append(g_centers.reshape(1, n_c, dim))
-        scalings.append(g_scalings.reshape(1, n_c, dim))
+        centers.append(torch.from_numpy(g_centers.reshape(1, n_c, dim)))
+        scalings.append(torch.from_numpy(g_scalings.reshape(1, n_c, dim)))
 
         weights.append(
-            torch.from_numpy(g_weights).reshape(
-                group_output_channels, group_input_channels, n_c))
+            torch.from_numpy(g_weights.reshape(
+                group_output_channels, group_input_channels, n_c)))
 
         virtual_weights.append(torch.from_numpy(v_w))
 
-    centers = torch.cat(centers).float()
+    centers = torch.cat(centers)
     centers.requires_grad = True
-    scalings = torch.cat(scalings).float()
+    scalings = torch.cat(scalings)
     scalings.requires_grad = True
-    weights = torch.cat(weights).float()
+    weights = torch.cat(weights)
     weights.requires_grad = True
-    virtual_weights = torch.cat(virtual_weights).float()
+    virtual_weights = torch.cat(virtual_weights)
     virtual_weights.requires_grad = True
 
-    bias = torch.rand(o_c)
+    bias = torch.rand(o_c, dtype=torch.double)
 
     # Create the input
-    input_ = torch.rand(batch, i_c, *input_spatial_shape)
+    input_ = torch.rand(batch, i_c, *input_spatial_shape, dtype=torch.double)
 
     # Function to test against
     tconv = D2F[dim]

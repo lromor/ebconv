@@ -17,6 +17,7 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
     batch = input_.shape[0]
     output_channels = weight[0].shape[0]
     spatial_dims = len(input_.shape[2:])
+    dtype = input_.dtype
 
     # Set of axes to permute. The first two are skipped
     # as they are the batch and the input channels.
@@ -58,8 +59,10 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
         # to remove the excess of values due to tha fake ddim
         # 1d conv.
         overlap_size = (width - 1) // dstride
-        conv = torch.cat([conv, torch.empty(*conv.shape[:2], overlap_size)],
-                         dim=-1)
+        conv = torch.cat(
+            [conv, torch.empty(*conv.shape[:2], overlap_size, dtype=dtype)],
+            dim=-1
+        )
 
         # Remove the excess from the 1d convolution.
         conv = conv.reshape(batch, output_channels, *spatial_shape[:-1], -1)
