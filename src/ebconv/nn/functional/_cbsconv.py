@@ -1,4 +1,4 @@
-"""Provides a set of pytorch functionals."""
+"""Implementation of the cardinabl b-spline convolution"""
 
 from collections import defaultdict
 
@@ -8,118 +8,12 @@ import numpy as np
 
 import torch
 
+from ebconv.nn.functional import convdd_separable
+from ebconv.nn.functional import crop
+
 from ebconv.splines import BSplineElement
 from ebconv.utils import convolution_output_shape
 from ebconv.kernel import sampling_domain
-
-
-def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
-    """Implement the separable convolution for a single filter.
-
-    This functions takes care of evaluating for each group
-    the separable convolution of a single filter. The filters
-    should contracted afterwards.
-    """
-    batch = input_.shape[0]
-    output_channels = weight[0].shape[0]
-    spatial_dims = len(input_.shape[2:])
-
-    # Set of axes to permute. The first two are skipped
-    # as they are the batch and the input channels.
-    paxes = np.roll(np.arange(2, spatial_dims + 2), 1)
-    conv = input_
-
-    # We convolve the separable kernel.
-    # We iterate per dimension.
-    params = (weight, stride, dilation)
-    for dweights, dstride, ddilation in zip(*params):
-        # The iC changes to oC after the first conv
-        input_channels = conv.shape[1]
-        spatial_shape = conv.shape[2:]
-
-        # Store the original spatial shape of the input tensor.
-        width = dweights.shape[-1]
-        width = ddilation * (width - 1) + 1
-
-        # Extend the input to fit the striding.
-        axis_size = spatial_shape[-1]
-        nshifts = axis_size // dstride
-        new_axis_size = dstride * (nshifts + 1)
-        conv = torch.nn.functional.pad(
-            conv, (0, new_axis_size - axis_size))
-
-        # Extending the input to fit the striding might
-        # have introduced output elements to be cropped.
-        output_axis_size = int((axis_size - width) / dstride + 1)
-        crop_ = int(nshifts - width / dstride + 2) - output_axis_size
-
-        # Compute the theoretical ddconvolution
-        # Perform the 1d convolution
-        conv = torch.nn.functional.conv1d(
-            conv.reshape(*conv.shape[:2], -1),
-            dweights, bias=bias, stride=dstride, padding=0,
-            dilation=ddilation, groups=input_channels)
-
-        # Add at the end extra values to have the right shape
-        # to remove the excess of values due to tha fake ddim
-        # 1d conv.
-        overlap_size = (width - 1) // dstride
-        conv = torch.cat([conv, torch.empty(*conv.shape[:2], overlap_size)],
-                         dim=-1)
-
-        # Remove the excess from the 1d convolution.
-        conv = conv.reshape(batch, output_channels, *spatial_shape[:-1], -1)
-        crop_ += overlap_size
-        crop_ = None if crop_ == 0 else -crop_
-        conv = conv[..., :crop_]
-        # Permute axes to have the one we are dealing with as last.
-        conv = conv.permute(0, 1, *paxes)
-    return conv
-
-
-def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
-                     bias: Optional[torch.Tensor] = None,
-                     stride: Union[int, Tuple[int, ...]] = 1,
-                     padding: Union[int, Tuple[int, ...]] = 0,
-                     dilation: Union[int, Tuple[int, ...]] = 1,
-                     groups: int = 1):
-    """Compute a separable d-dimensional convolution."""
-    spatial_shape = input_.shape[2:]
-    spatial_dims = len(spatial_shape)
-
-    # There should be a weight per dimension.
-    assert spatial_dims == len(weight)
-    assert groups > 0
-
-    weight = weight[::-1]
-    if not isinstance(stride, Tuple):
-        stride = ((stride,) * spatial_dims)
-
-    if not isinstance(padding, Tuple):
-        padding = ((padding,) * spatial_dims)
-
-    if not isinstance(dilation, Tuple):
-        dilation = ((dilation,) * spatial_dims)
-
-    # Add the padding
-    pad = [(p, p) for p in padding]
-    pad = sum(pad, ())
-    input_ = torch.nn.functional.pad(input_, pad)
-
-    group_input_channels = weight[0].shape[1]
-    new_ishape = input_.shape[0], groups, -1, *input_.shape[2:]
-
-    # Reshape into batch, group, group filters, ...
-    input_ = input_.reshape(new_ishape)
-
-    # Split along the filters the weights
-    weight = [[w[:, i, ...].unsqueeze(1) for w in weight]
-              for i in range(group_input_channels)]
-    return torch.stack([
-        _convdd_separable_per_filter(
-            input_[:, :, i, ...], weight[i], bias, stride, dilation)
-        for i in range(group_input_channels)
-    ]).sum(dim=0)
 
 
 class UnivariateCardinalBSpline(torch.autograd.Function):
@@ -364,32 +258,3 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     output = output if bias is None \
         else output + bias.reshape(1, -1, *((1,) * spatial_dims))
     return output
-
-
-def crop(input_: torch.Tensor, crop_: Tuple[int, ...]) -> torch.Tensor:
-    """Crop the tensor using an array of values.
-
-    Opposite operation of pad.
-    Args:
-        x: Input tensor.
-        crop: Tuple of crop values.
-
-    Returns:
-        Cropped tensor.
-
-    """
-    assert len(crop_) % 2 == 0
-    crop_ = [(crop_[i], crop_[i + 1]) for i in range(0, len(crop_) - 1, 2)]
-    assert len(crop_) <= len(input_.shape)
-
-    # Construct the bounds and padding list of tuples
-    slices = [...]
-    for left, right in crop_:
-        left = left if left != 0 else None
-        right = -right if right != 0 else None
-        slices.append(slice(left, right, None))
-
-    slices = tuple(slices)
-
-    # Apply the crop and return
-    return input_[slices]
