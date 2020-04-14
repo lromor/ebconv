@@ -11,6 +11,7 @@ from ebconv.nn.functional import cbsconv
 from ebconv.nn.functional import UnivariateCardinalBSpline
 from ebconv.nn.functional import convdd_separable
 from ebconv.nn.functional import crop
+from ebconv.nn.functional import translate
 from ebconv.kernel import sampling_domain
 
 
@@ -28,6 +29,38 @@ def test_crop_simple():
         .equal(torch.Tensor((
             (2.0, 3.0),
             (5.0, 6.0),
+        ))[None, None, :])
+
+
+def test_translate_simple():
+    """Check the resulting op using 2d tensor respects the specification."""
+    # Simple 2d tensor to test the shift and crop
+    tt_input = torch.tensor((
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+        (0.0, 1.0, 2.0, 3.0, 0.0),
+        (0.0, 4.0, 5.0, 6.0, 0.0),
+        (0.0, 7.0, 8.0, 9.0, 0.0),
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+    ))[None, None, :]
+
+    assert translate(tt_input, (1, -2), mode='constant', value=0) \
+        .equal(torch.tensor((
+            (0.0, 0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0),
+            (2.0, 3.0, 0.0, 0.0, 0.0),
+            (5.0, 6.0, 0.0, 0.0, 0.0),
+            (8.0, 9.0, 0.0, 0.0, 0.0),
+        ))[None, None, :])
+
+    # There's no numpy symmetric, the closest is "reflect"
+    # which discards the border in the reflection.
+    assert translate(tt_input, (1, -2), mode='reflect') \
+        .equal(torch.tensor((
+            (2.0, 3.0, 0.0, 3.0, 2.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0),
+            (2.0, 3.0, 0.0, 3.0, 2.0),
+            (5.0, 6.0, 0.0, 6.0, 5.0),
+            (8.0, 9.0, 0.0, 9.0, 8.0),
         ))[None, None, :])
 
 
@@ -184,3 +217,26 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
                      bias=bias, stride=stride, padding=padding,
                      dilation=dilation, groups=groups)
     assert torch.allclose(torch_output, output)
+
+
+def test_csbsconv_grad():
+    """Test the direction of the gradient for a simple example."""
+    input_ = torch.zeros(1, 1, 7, 7)
+    input_[:, :, 3, 3] = 1
+    shift = (1, -1)
+
+    # Create a 2d basis
+    center = torch.tensor((0.0, 0.0), requires_grad=True)
+    center = center.reshape(1, 1, 2)
+    center.retain_grad()
+    scaling = torch.tensor((0.5, 0.5), requires_grad=False).reshape(1, 1, 2)
+    weights = torch.ones(1, 1, 1, requires_grad=False)
+    k = 2
+    out = cbsconv(input_, (4, 4), weights, center, scaling, k)
+    shifted_out = translate(out.data.clone(), shift)
+    loss = torch.nn.MSELoss()
+    l_out = loss(out, shifted_out)
+    l_out.backward()
+    ratio = center.grad / torch.tensor(shift)
+    ratio = ratio.squeeze()
+    assert (ratio[0] - ratio[1]) == 0
