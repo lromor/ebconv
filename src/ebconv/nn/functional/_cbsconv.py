@@ -151,6 +151,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     and values (c,s,k) across the filters. The weight though can differ
     both group and filter wise.
     """
+    assert input_.dtype == weights.dtype == c.dtype == s.dtype
+    dtype = input_.dtype
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
     batch = input_.shape[0]
@@ -199,7 +201,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     weights = weights.reshape(
         groups, group_oc, group_ic, n_c)
     output = torch.zeros(
-        batch, groups, group_oc, *output_spatial_shape)
+        batch, groups, group_oc, *output_spatial_shape, dtype=dtype)
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
