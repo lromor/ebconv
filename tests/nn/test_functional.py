@@ -219,24 +219,37 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
     assert torch.allclose(torch_output, output)
 
 
-def test_csbsconv_grad():
+
+@pytest.mark.parametrize('k', [2, 3, 4])
+@pytest.mark.parametrize('shift', [
+    (5, 3), (-2, 4), (-2, -3), (0, 0),
+    (2, 1), (1, -2)
+])
+def test_csbsconv_grad(shift, k):
     """Test the direction of the gradient for a simple example."""
-    input_ = torch.zeros(1, 1, 7, 7)
-    input_[:, :, 3, 3] = 1
-    shift = (1, -1)
+    input_ = torch.zeros(1, 1, 31, 31)
+    input_[:, :, 15, 15] = 1
+
+    # domain between -10, 10
+    kernel_size = (20, 20)
 
     # Create a 2d basis
     center = torch.tensor((0.0, 0.0), requires_grad=True)
+    optimizer = torch.optim.Adam([center], lr=1)
     center = center.reshape(1, 1, 2)
     center.retain_grad()
-    scaling = torch.tensor((0.5, 0.5), requires_grad=False).reshape(1, 1, 2)
+    scaling = torch.tensor((3.0, 3.0), requires_grad=False).reshape(1, 1, 2)
     weights = torch.ones(1, 1, 1, requires_grad=False)
-    k = 2
-    out = cbsconv(input_, (4, 4), weights, center, scaling, k)
+    out = cbsconv(input_, kernel_size, weights, center, scaling, k)
     shifted_out = translate(out.data.clone(), shift)
     loss = torch.nn.MSELoss()
-    l_out = loss(out, shifted_out)
-    l_out.backward()
-    ratio = center.grad / torch.tensor(shift)
-    ratio = ratio.squeeze()
-    assert (ratio[0] - ratio[1]) == 0
+
+    for _ in range(100):
+        out = cbsconv(input_, kernel_size, weights, center, scaling, k)
+        l_out = loss(out, shifted_out)
+        optimizer.zero_grad()
+        l_out.backward()
+        step = optimizer.step()
+
+    assert torch.allclose(
+        torch.tensor(shift) + center, torch.zeros_like(center), atol=1e-1)
