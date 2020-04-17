@@ -24,19 +24,21 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
     def forward(ctx, input_, c, s, k):
         # ctx is a context object that can be used to stash information
         # for backward computation
-        c_n = c.item()
-        s_n = s.item()
         x_n = input_.numpy()
+        c_n = c.data.item()
+        s_n = s.data.item()
 
         spline = BSplineElement.create_cardinal(c_n, s_n, k)
         dspline = spline.derivative()
 
         # pylint: disable=E1102
+        ctx.input_ = input_
         ctx.s = s
+        ctx.c = c
 
         y = spline(x_n)
-        # pylint: disable=E1102
         ctx.derivative = torch.tensor(dspline(x_n), dtype=input_.dtype)
+
         # pylint: disable=E1102
         return torch.tensor(y, dtype=input_.dtype)
 
@@ -47,7 +49,7 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
             return (None,) * 4
 
         c_grad = -ctx.derivative * grad_output
-        s_grad = -ctx.derivative / (ctx.s * ctx.s) * grad_output
+        s_grad = c_grad * (ctx.input_ - ctx.c) / ctx.s
         return None, c_grad, s_grad, None
 
 
@@ -151,6 +153,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     and values (c,s,k) across the filters. The weight though can differ
     both group and filter wise.
     """
+    assert input_.dtype == weights.dtype == c.dtype == s.dtype
+    dtype = input_.dtype
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
     batch = input_.shape[0]
@@ -199,7 +203,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     weights = weights.reshape(
         groups, group_oc, group_ic, n_c)
     output = torch.zeros(
-        batch, groups, group_oc, *output_spatial_shape)
+        batch, groups, group_oc, *output_spatial_shape, dtype=dtype)
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
