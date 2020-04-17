@@ -24,19 +24,21 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
     def forward(ctx, input_, c, s, k):
         # ctx is a context object that can be used to stash information
         # for backward computation
-        c_n = c.item()
-        s_n = s.item()
         x_n = input_.numpy()
+        c_n = c.data.item()
+        s_n = s.data.item()
 
         spline = BSplineElement.create_cardinal(c_n, s_n, k)
         dspline = spline.derivative()
 
         # pylint: disable=E1102
+        ctx.input_ = input_
         ctx.s = s
+        ctx.c = c
 
         y = spline(x_n)
-        # pylint: disable=E1102
         ctx.derivative = torch.tensor(dspline(x_n), dtype=input_.dtype)
+
         # pylint: disable=E1102
         return torch.tensor(y, dtype=input_.dtype)
 
@@ -47,7 +49,7 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
             return (None,) * 4
 
         c_grad = -ctx.derivative * grad_output
-        s_grad = -ctx.derivative / (ctx.s * ctx.s) * grad_output
+        s_grad = c_grad * (ctx.input_ - ctx.c) / ctx.s
         return None, c_grad, s_grad, None
 
 

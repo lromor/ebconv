@@ -122,18 +122,18 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
 
 
 @pytest.mark.parametrize('k', [2, 3])
-@pytest.mark.parametrize('s', [0.1, 1, 2])
-@pytest.mark.parametrize('c', [0, 0.3, -5])
+@pytest.mark.parametrize('s', [0.1, 1.0, 2.0])
+@pytest.mark.parametrize('c', [0.0, 0.3, -5.0])
 def test_autograd_univariate_cardinalbspline(c, s, k):
     """Test that the autograd for cardinalbspline.
 
     Notice the for k = 0,1 the splines are not differentiable.
     """
-    input_ = torch.arange(-10, 10, dtype=torch.double, requires_grad=False)
+    input_ = torch.linspace(-10, 10, dtype=torch.double, requires_grad=False)
     # pylint: disable=E1102
     c = torch.tensor(c, dtype=torch.double, requires_grad=True).reshape(1)
     # pylint: disable=E1102
-    s = torch.tensor(s, dtype=torch.double, requires_grad=False)
+    s = torch.tensor(s, dtype=torch.double, requires_grad=True).reshape(1)
 
     params = (input_, c, s, k)
     torch.autograd.gradcheck(UnivariateCardinalBSpline.apply,
@@ -222,8 +222,8 @@ def test_cbsconv(i_c, o_c, groups, dim, k, stride, padding, dilation):
 
 @pytest.mark.parametrize('k', [2, 3, 4])
 @pytest.mark.parametrize('shift', [
-    (5, 3), (-2, 4), (-2, -3), (0, 0),
-    (2, 1), (1, -2)
+    (5, 3), (-2, 4), (-2, -3),
+    (2, 1), (1, -2), (-7, 4)
 ])
 def test_csbsconv_grad(shift, k):
     """Test the direction of the gradient for a simple example."""
@@ -235,7 +235,7 @@ def test_csbsconv_grad(shift, k):
 
     # Create a 2d basis
     center = torch.tensor((0.0, 0.0), requires_grad=True)
-    optimizer = torch.optim.Adam([center], lr=1)
+    optimizer = torch.optim.Adam([center], lr=0.5)
     center = center.reshape(1, 1, 2)
     center.retain_grad()
     scaling = torch.tensor((3.0, 3.0), requires_grad=False).reshape(1, 1, 2)
@@ -244,12 +244,15 @@ def test_csbsconv_grad(shift, k):
     shifted_out = translate(out.data.clone(), shift)
     loss = torch.nn.MSELoss()
 
-    for _ in range(100):
+    assert not torch.allclose(
+        torch.tensor(shift) + center, torch.zeros_like(center), atol=1e-3)
+
+    for _ in range(200):
         out = cbsconv(input_, kernel_size, weights, center, scaling, k)
         l_out = loss(out, shifted_out)
         optimizer.zero_grad()
         l_out.backward()
-        step = optimizer.step()
+        optimizer.step()
 
     assert torch.allclose(
-        torch.tensor(shift) + center, torch.zeros_like(center), atol=1e-1)
+        torch.tensor(shift) + center, torch.zeros_like(center), atol=1e-3)
