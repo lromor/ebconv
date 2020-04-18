@@ -235,6 +235,7 @@ def test_csbsconv_grad(shift, k):
     kernel_size = (20, 20)
 
     # Create a 2d basis
+    # pylint: disable=E1102
     center = torch.tensor((0.0, 0.0), requires_grad=True)
     optimizer = torch.optim.Adam([center], lr=0.5)
     center = center.reshape(1, 1, 2)
