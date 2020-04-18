@@ -35,6 +35,7 @@ def test_crop_simple():
 def test_translate_simple():
     """Check the resulting op using 2d tensor respects the specification."""
     # Simple 2d tensor to test the shift and crop
+    # pylint: disable=E1102
     tt_input = torch.tensor((
         (0.0, 0.0, 0.0, 0.0, 0.0),
         (0.0, 1.0, 2.0, 3.0, 0.0),
