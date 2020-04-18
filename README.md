@@ -3,6 +3,9 @@
 [1]: https://arxiv.org/abs/1909.12057
 [2]: https://docs.nvidia.com/deeplearning/sdk/pdf/cuDNN-API.pdf
 
+[![Build
+Status](https://travis-ci.com/lromor/ebconv.svg?token=qj78wiWyraZW4FD7pwLr&branch=master)](https://travis-ci.com/lromor/ebconv)
+
 # EBC✵NV 
 
 Equivariant B-splines CONVolutions.
