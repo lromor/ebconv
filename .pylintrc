@@ -293,7 +293,8 @@ good-names=i,
            z,
            c,
            s,
-           k
+           k,
+           nc
 
 # Include a hint for the correct naming format with invalid-name.
 include-naming-hint=no

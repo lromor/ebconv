@@ -13,6 +13,12 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
     This functions takes care of evaluating for each group
     the separable convolution of a single filter. The filters
     should contracted afterwards.
+    NOTE: In this implementation we are reshaping all the spatial
+          dimensions in a single long array. It would be more efficient
+          to reshape every non-last dimension into "batch". This would
+          maybe speedup the parallel computation and simplify the code.
+          This is because we just have to multiply for each row/batch
+          for the same kernel value.
     """
     batch = input_.shape[0]
     output_channels = weight[0].shape[0]

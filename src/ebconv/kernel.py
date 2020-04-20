@@ -17,6 +17,16 @@ import numpy as np
 from ebconv.splines import BSplineElement
 
 
+def create_uniform_grid(region: Tuple[float, ...],
+                        size: Tuple[int, ...]):
+    """Creates a uniform grid."""
+    bounds = tuple((-width / 2, width / 2) for width in region)
+    grid_axes = [np.linspace(l, u, size)
+                 for l, u, size in zip(bounds, size)]
+    grid = np.stack(np.meshgrid(*grid_axes, indexing='ij'), -1)
+    return grid.reshape(-1, 2)
+
+
 def create_random_centers(region: Tuple[float, ...],
                           ncenters: int, integrally_spaced=False,
                           unique=False):
