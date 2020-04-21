@@ -24,7 +24,8 @@ class CBSConv(torch.nn.Module):
                  groups=1, bias=True, padding_mode='zeros'):
         super().__init__()
         assert isinstance(kernel_size, Tuple)
-        assert k > 0
+        if k < 1:
+            raise ValueError('k must be >= 1')
         dims = len(kernel_size)
 
         if isinstance(stride, int):
@@ -72,7 +73,7 @@ class CBSConv(torch.nn.Module):
             for _ in range(self.groups)])
 
         factor = self.nc ** (1 / self.dims)
-        scaling = [size / (factor * self.k) for size in self.kernel_size]
+        scaling = [size / (factor * (self.k + 1)) for size in self.kernel_size]
         self.scalings.data = torch.ones(self.groups, self.nc, self.dims)
         self.scalings.data *= torch.Tensor(scaling).reshape(1, 1, self.dims)
 
