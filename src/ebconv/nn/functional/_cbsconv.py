@@ -242,12 +242,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         basis_conv = basis_conv.reshape(
             batch, b_groups, group_ic, *b_spatial_shape)
 
-        # Duplicate for each group output channel the result.
-        # The final shape should be batch, b_groups, group_oc, group_ic, ...
-        basis_conv = basis_conv.repeat_interleave(group_oc, dim=1)
-        basis_conv = basis_conv.reshape(
-            batch, b_groups, group_oc, group_ic, *b_spatial_shape)
-
         # Iterate through each group and perform the required crop.
         for group_idx, shift, group_weight in shifts_and_weights:
             b_group = g2i[group_idx]
@@ -258,12 +252,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
             group_conv = crop(group_conv, crop_)
-
-            # Complete the tensordot and sum over the group_ic
-            group_weight = group_weight.reshape(
-                *group_weight.shape, *((1,) * spatial_dims))
-            g_out = (group_conv * group_weight).sum(dim=2)
-            output[:, group_idx, ...] += g_out
+            output[:, group_idx, ...] += torch.tensordot(
+                group_weight, group_conv, dims=[(1,), (1,)]).transpose(0, 1)
 
     output = output.reshape(*output_shape)
     output = output if bias is None \
