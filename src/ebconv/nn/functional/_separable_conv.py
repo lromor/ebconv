@@ -21,6 +21,7 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
           for the same kernel value.
     """
     batch = input_.shape[0]
+    device = input_.device
     output_channels = weight[0].shape[0]
     spatial_dims = len(input_.shape[2:])
     dtype = input_.dtype
@@ -66,7 +67,8 @@ def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
         # 1d conv.
         overlap_size = (width - 1) // dstride
         conv = torch.cat(
-            [conv, torch.empty(*conv.shape[:2], overlap_size, dtype=dtype)],
+            [conv, torch.empty(*conv.shape[:2], overlap_size,
+                               dtype=dtype, device=device)],
             dim=-1
         )
 

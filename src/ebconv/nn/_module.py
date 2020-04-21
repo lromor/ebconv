@@ -2,7 +2,7 @@
 
 import math
 
-from typing import Tuple
+from typing import Tuple, Union
 
 import torch
 from torch.nn import init
@@ -16,18 +16,35 @@ class CBSConv(torch.nn.Module):
     """Torch module for learning cardinal bspline kernels."""
 
     def __init__(self, in_channels: int, out_channels: int,
-                 kernel_size: Tuple[int, ...], nc: int, k: int,
-                 stride=1, padding=0, dilation=1, groups=1,
-                 bias=True, padding_mode='zeros'):
+                 kernel_size: Tuple[int, ...],
+                 nc: int, k: int,
+                 stride: Union[Tuple[int, ...], int] = 1,
+                 padding: Union[Tuple[int, ...], int] = 0,
+                 dilation: Union[Tuple[int, ...], int] = 1,
+                 groups=1, bias=True, padding_mode='zeros'):
         super().__init__()
+        assert isinstance(kernel_size, Tuple)
+        assert k > 0
+        dims = len(kernel_size)
+
+        if isinstance(stride, int):
+            stride = ((stride,) * dims)
+
+        if isinstance(padding, int):
+            padding = ((padding,) * dims)
+
+        if isinstance(dilation, int):
+            dilation = ((dilation,) * dims)
+
         if in_channels % groups != 0:
             raise ValueError('in_channels must be divisible by groups')
         if out_channels % groups != 0:
             raise ValueError('out_channels must be divisible by groups')
+
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
-        self.dims = dims = len(kernel_size)
+        self.dims = dims
         self.k = k
         self.nc = nc
         self.stride = stride
@@ -49,17 +66,15 @@ class CBSConv(torch.nn.Module):
 
     def reset_parameters(self):
         """Reset parameters using default initializers."""
-        with torch.no_grad():
-            self.centers = torch.stack([
-                torch.from_numpy(
-                    create_random_centers(self.kernel_size, self.nc))
-                for _ in self.groups])
+        self.centers.data = torch.stack([
+            torch.from_numpy(
+                create_random_centers(self.kernel_size, self.nc)).float()
+            for _ in range(self.groups)])
 
-            scalings = torch.Tensor(
-                [size / self.nc for size in self.kernel_size]
-            ).reshape(1, 1, self.dims)
-            self.scalings = torch.ones(
-                self.groups, self.nc, self.dims) * scalings
+        factor = self.nc ** (1 / self.dims)
+        scaling = [size / (factor * self.k) for size in self.kernel_size]
+        self.scalings.data = torch.ones(self.groups, self.nc, self.dims)
+        self.scalings.data *= torch.Tensor(scaling).reshape(1, 1, self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
         if self.bias is not None:

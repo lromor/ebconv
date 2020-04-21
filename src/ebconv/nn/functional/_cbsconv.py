@@ -24,7 +24,9 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
     def forward(ctx, input_, c, s, k):
         # ctx is a context object that can be used to stash information
         # for backward computation
-        x_n = input_.numpy()
+        device = input_.device
+
+        x_n = input_.data.cpu().numpy()
         c_n = c.data.item()
         s_n = s.data.item()
 
@@ -37,10 +39,11 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
         ctx.c = c
 
         y = spline(x_n)
-        ctx.derivative = torch.tensor(dspline(x_n), dtype=input_.dtype)
+        ctx.derivative = torch.tensor(
+            dspline(x_n), dtype=input_.dtype, device=device)
 
         # pylint: disable=E1102
-        return torch.tensor(y, dtype=input_.dtype)
+        return torch.tensor(y, dtype=input_.dtype, device=device)
 
     @staticmethod
     # pylint: disable=arguments-differ
@@ -72,7 +75,7 @@ class SplineWeightsHashing():
         self.shift_stride = shift_stride
 
     def __hash__(self):
-        h_1 = hash(tuple(tuple(w_i.data.numpy()) for w_i in self.l_t))
+        h_1 = hash(tuple(tuple(w_i.data.cpu().numpy()) for w_i in self.l_t))
         h_2 = hash(self.shift_stride)
         return h_1 ^ h_2
 
@@ -99,7 +102,7 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
         # For each dimension, crop the sampling values to fit
         # only the support of the spline.
         bounds = BSplineElement.create_cardinal(
-            b_c.data.numpy(), b_s.data.numpy(), k
+            b_c.data.cpu().numpy(), b_s.data.cpu().numpy(), k
         ).support_bounds().reshape(-1, 2)
 
         # Select only the part of the domain that intesects with the
@@ -155,6 +158,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     """
     assert input_.dtype == weights.dtype == c.dtype == s.dtype
     dtype = input_.dtype
+    device = input_.device
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
     batch = input_.shape[0]
@@ -195,7 +199,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # Sampling domain.
     # pylint: disable=E1102
-    kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype)
+    kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype, device=device)
                 for s in kernel_size]
 
     input_ = input_.reshape(
@@ -203,8 +207,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     weights = weights.reshape(
         groups, group_oc, group_ic, n_c)
     output = torch.zeros(
-        batch, groups, group_oc, *output_spatial_shape, dtype=dtype)
-
+        batch, groups, group_oc, *output_spatial_shape, dtype=dtype,
+        device=device)
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
         input_, output, kernel_x, weights, c, s, k, dilation, stride)
@@ -231,6 +235,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         basis_conv = convdd_separable(
             b_input, spline_ws, stride=stride, dilation=dilation,
             groups=sep_conv_groups)
+
         b_spatial_shape = basis_conv.shape[2:]
         # Each input is separately convolved. We now split the output
         # per-group.
