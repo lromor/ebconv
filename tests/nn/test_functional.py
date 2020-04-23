@@ -119,6 +119,8 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
     output = convdd_separable(
         input_, weight, stride=stride, padding=padding, dilation=dilation,
         groups=groups)
+
+    assert torch_output.shape == output.shape
     assert torch.allclose(torch_output, output)
 
 

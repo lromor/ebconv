@@ -165,7 +165,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     input_channels = input_.shape[1]
     output_channels, group_ic = weights.shape[0], weights.shape[1]
     n_c = weights.shape[-1]
-    dtype = input_.dtype
     group_oc = output_channels // groups
 
     if not isinstance(k, Iterable):
@@ -209,6 +208,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     output = torch.zeros(
         batch, groups, group_oc, *output_spatial_shape, dtype=dtype,
         device=device)
+
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
         input_, output, kernel_x, weights, c, s, k, dilation, stride)

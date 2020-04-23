@@ -7,96 +7,32 @@ import numpy as np
 import torch
 
 
-def _convdd_separable_per_filter(input_, weight, bias, stride, dilation):
-    """Implement the separable convolution for a single filter.
-
-    This functions takes care of evaluating for each group
-    the separable convolution of a single filter. The filters
-    should contracted afterwards.
-    NOTE: In this implementation we are reshaping all the spatial
-          dimensions in a single long array. It would be more efficient
-          to reshape every non-last dimension into "batch". This would
-          maybe speedup the parallel computation and simplify the code.
-          This is because we just have to multiply for each row/batch
-          for the same kernel value.
-    """
-    batch = input_.shape[0]
-    device = input_.device
-    output_channels = weight[0].shape[0]
-    spatial_dims = len(input_.shape[2:])
-    dtype = input_.dtype
-
-    # Set of axes to permute. The first two are skipped
-    # as they are the batch and the input channels.
-    paxes = np.roll(np.arange(2, spatial_dims + 2), 1)
-    conv = input_
-
-    # We convolve the separable kernel.
-    # We iterate per dimension.
-    params = (weight, stride, dilation)
-    for dweights, dstride, ddilation in zip(*params):
-        # The iC changes to oC after the first conv
-        input_channels = conv.shape[1]
-        spatial_shape = conv.shape[2:]
-
-        # Store the original spatial shape of the input tensor.
-        width = dweights.shape[-1]
-        width = ddilation * (width - 1) + 1
-
-        # Extend the input to fit the striding.
-        axis_size = spatial_shape[-1]
-        nshifts = axis_size // dstride
-        new_axis_size = dstride * (nshifts + 1)
-        conv = torch.nn.functional.pad(
-            conv, (0, new_axis_size - axis_size))
-
-        # Extending the input to fit the striding might
-        # have introduced output elements to be cropped.
-        output_axis_size = int((axis_size - width) / dstride + 1)
-        crop_ = int(nshifts - width / dstride + 2) - output_axis_size
-
-        # Compute the theoretical ddconvolution
-        # Perform the 1d convolution
-        conv = torch.nn.functional.conv1d(
-            conv.reshape(*conv.shape[:2], -1),
-            dweights, bias=bias, stride=dstride, padding=0,
-            dilation=ddilation, groups=input_channels)
-
-        # Add at the end extra values to have the right shape
-        # to remove the excess of values due to tha fake ddim
-        # 1d conv.
-        overlap_size = (width - 1) // dstride
-        conv = torch.cat(
-            [conv, torch.empty(*conv.shape[:2], overlap_size,
-                               dtype=dtype, device=device)],
-            dim=-1
-        )
-
-        # Remove the excess from the 1d convolution.
-        conv = conv.reshape(batch, output_channels, *spatial_shape[:-1], -1)
-        crop_ += overlap_size
-        crop_ = None if crop_ == 0 else -crop_
-        conv = conv[..., :crop_]
-        # Permute axes to have the one we are dealing with as last.
-        conv = conv.permute(0, 1, *paxes)
-    return conv
-
-
 def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
                      bias: Optional[torch.Tensor] = None,
                      stride: Union[int, Tuple[int, ...]] = 1,
                      padding: Union[int, Tuple[int, ...]] = 0,
                      dilation: Union[int, Tuple[int, ...]] = 1,
                      groups: int = 1):
-    """Compute a separable d-dimensional convolution."""
-    spatial_shape = input_.shape[2:]
-    spatial_dims = len(spatial_shape)
+    """Compute a separable d-dimensional convolution.
+
+    input.shape = batch, iC, iX, iY, iZ, ...
+    weight = dims, sizes
+    """
+    # If it's one dimensional, simply use conv1d.
+    if len(weight) == 1:
+        return torch.nn.functional.conv1d(
+            input_, weight[0], bias=bias, stride=stride,
+            padding=padding, dilation=dilation, groups=groups)
 
     # There should be a weight per dimension.
-    assert spatial_dims == len(weight)
-    assert groups > 0
-
     weight = weight[::-1]
+    spatial_shape = input_.shape[2:]
+    spatial_dims = len(spatial_shape)
+    batch = input_.shape[0]
+    output_channels, group_ic = weight[0].shape[:2]
+    group_oc = output_channels // groups
+
+    assert spatial_dims == len(weight)
     if not isinstance(stride, Tuple):
         stride = ((stride,) * spatial_dims)
 
@@ -106,22 +42,43 @@ def convdd_separable(input_: torch.Tensor, weight: Iterable[torch.Tensor],
     if not isinstance(dilation, Tuple):
         dilation = ((dilation,) * spatial_dims)
 
-    # Add the padding
-    pad = [(p, p) for p in padding]
-    pad = sum(pad, ())
-    input_ = torch.nn.functional.pad(input_, pad)
+    # Move the spatial dims except the last one after the batch dim.
+    axes = np.arange(len(input_.shape))
 
-    group_input_channels = weight[0].shape[1]
-    new_ishape = input_.shape[0], groups, -1, *input_.shape[2:]
+    # Permute to have batch, s1, s2, i_c, s3
+    init_perm = (0, *axes[2:-1], 1, axes[-1])
+    conv = input_.permute(init_perm)
 
-    # Reshape into batch, group, group filters, ...
-    input_ = input_.reshape(new_ishape)
+    # Permutation indices to such that s1, s2, s3 are
+    # permuting. For instance (0, 4, 1, 3, 2) -> (batch, s3, s1, i_c, s2)
+    paxes = (0, axes[-1], *axes[1:spatial_dims - 1],
+             axes[-2], axes[-3])
 
-    # Split along the filters the weights
-    weight = [[w[:, i, ...].unsqueeze(1) for w in weight]
-              for i in range(group_input_channels)]
-    return torch.stack([
-        _convdd_separable_per_filter(
-            input_[:, :, i, ...], weight[i], bias, stride, dilation)
-        for i in range(group_input_channels)
-    ]).sum(dim=0)
+    # We want to iterate through the group input channels during the sep conv.
+    weight = [dweight.permute(1, 0, 2) for dweight in weight]
+
+    # Iterate through the dimensions
+    params = (stride, padding, dilation)
+    for dstride, dpadding, ddilation, dweight in zip(*params, weight):
+        original_shape = conv.shape
+        conv = conv.reshape(*conv.shape[:-2], -1, group_ic, conv.shape[-1])
+        conv = conv.reshape(-1, *conv.shape[-3:])
+        conv = torch.cat([
+            torch.nn.functional.conv1d(
+                conv[..., i, :],
+                dweight[i, ...].unsqueeze(1), stride=dstride, padding=dpadding,
+                dilation=ddilation, groups=conv.shape[-3])
+            for i in range(group_ic)
+        ], dim=1)
+        # group_ic, groups, group_oc
+        conv = conv.reshape(*original_shape[:-2], group_ic, -1, conv.shape[-1])
+        # groups, group_oc, group_ic
+        conv = conv.transpose(-2, -3)
+        conv = conv.reshape(*original_shape[:-2], -1, conv.shape[-1])
+        conv = conv.permute(paxes)
+
+    final_perm = (0, axes[-2], *axes[1:-2], -1)
+    conv = conv.permute(final_perm)
+    return conv.reshape(
+        batch, output_channels, group_ic, *conv.shape[2:]
+    ).sum(dim=2)
