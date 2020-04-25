@@ -206,8 +206,12 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     weights = weights.reshape(
         groups, group_oc, group_ic, n_c)
     output = torch.zeros(
-        batch, groups, group_oc, *output_spatial_shape, dtype=dtype,
+        groups, batch, group_oc, *output_spatial_shape, dtype=dtype,
         device=device)
+
+    # Let's move the groups as first dimension as we will access them by index
+    # multiple times and they are supposed to be less than the batch size.
+    input_ = input_.transpose(0, 1)
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
@@ -216,8 +220,15 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     for spline_ws, shift_stride, input_indices,\
         shifts_and_weights in bases_convs_params:
         g2i = {g: i for i, g in enumerate(input_indices)}
-        b_input = input_[:, input_indices, ...]
-        b_input = b_input.reshape(batch, -1, *spatial_shape)
+        b_input = input_[input_indices]
+        # Transform everything into batch
+        b_batch = 128 if batch % 128 == 0 else batch
+        b_input = b_input.reshape(b_batch, -1, *spatial_shape)
+        # NOTE: For some reason if we put everything into the batch
+        # dimension the computation becomes extremely slow. I suspect
+        # it has to do with permutations in the convdd_separable
+        # in the backward pass.
+        #b_input = b_input.reshape(-1, 1, *spatial_shape)
 
         # Crop the input to fit the striding.
         crop_shift_stride = [(s_s, 0) for s_s in shift_stride]
@@ -225,7 +236,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         b_input = crop(b_input, crop_shift_stride)
 
         b_groups = len(g2i)
-
         sep_conv_groups = b_input.shape[1]
 
         # We need only a single output channel for the single
@@ -240,21 +250,23 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         # Each input is separately convolved. We now split the output
         # per-group.
         basis_conv = basis_conv.reshape(
-            batch, b_groups, group_ic, *b_spatial_shape)
+            b_groups, batch, group_ic, *b_spatial_shape)
 
         # Iterate through each group and perform the required crop.
         for group_idx, shift, group_weight in shifts_and_weights:
             b_group = g2i[group_idx]
-            group_conv = basis_conv[:, b_group, ...]
+            group_conv = basis_conv[b_group]
             shape_diff = b_spatial_shape - output_spatial_shape
             cropl = (shift - np.array(shift_stride)) // np.array(stride)
             cropr = shape_diff - cropl
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
             group_conv = crop(group_conv, crop_)
-            output[:, group_idx, ...] += torch.tensordot(
+            output[group_idx] += torch.tensordot(
                 group_weight, group_conv, dims=[(1,), (1,)]).transpose(0, 1)
 
+    # Revert back the group / batch swap
+    output = output.transpose(0, 1)
     output = output.reshape(*output_shape)
     output = output if bias is None \
         else output + bias.reshape(1, -1, *((1,) * spatial_dims))
