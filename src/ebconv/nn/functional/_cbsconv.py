@@ -8,7 +8,6 @@ import numpy as np
 
 import torch
 
-from ebconv.nn.functional import convdd_separable
 from ebconv.nn.functional import crop
 
 from ebconv.splines import BSplineElement
@@ -135,6 +134,23 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
             for key, (i_set, shifts_and_weights) in weights_map.items()]
 
 
+def _cbs_convdd_separable(input_, weights, stride, dilation):
+    if not weights:
+        return input_
+    original_shape = input_.shape
+    input_ = input_.reshape(input_.shape[0], -1, input_.shape[-1])
+    weight = weights.pop().reshape(1, 1, -1).repeat(input_.shape[1], 1, 1)
+    conv = torch.nn.functional.conv1d(
+        input_, weight, stride=stride.pop(),
+        dilation=dilation.pop(), groups=weight.shape[0])
+    conv = conv.reshape(*original_shape[:-1], -1)
+    # Permute axes
+    axes = np.arange(len(conv.shape))
+    paxes = np.roll(axes[2:], 1)
+    return _cbs_convdd_separable(
+        conv.permute(0, 1, *paxes), weights, stride, dilation)
+
+
 def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             weights: torch.Tensor, c: torch.Tensor,
             s: torch.Tensor, k: int,
@@ -216,19 +232,12 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
         input_, output, kernel_x, weights, c, s, k, dilation, stride)
-
+    stride, dilation = list(stride), list(dilation)
     for spline_ws, shift_stride, input_indices,\
         shifts_and_weights in bases_convs_params:
         g2i = {g: i for i, g in enumerate(input_indices)}
         b_input = input_[input_indices]
-        # Transform everything into batch
-        b_batch = 128 if batch % 128 == 0 else batch
-        b_input = b_input.reshape(b_batch, -1, *spatial_shape)
-        # NOTE: For some reason if we put everything into the batch
-        # dimension the computation becomes extremely slow. I suspect
-        # it has to do with permutations in the convdd_separable
-        # in the backward pass.
-        #b_input = b_input.reshape(-1, 1, *spatial_shape)
+        b_input = b_input.reshape(batch, -1, *spatial_shape)
 
         # Crop the input to fit the striding.
         crop_shift_stride = [(s_s, 0) for s_s in shift_stride]
@@ -236,21 +245,18 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         b_input = crop(b_input, crop_shift_stride)
 
         b_groups = len(g2i)
-        sep_conv_groups = b_input.shape[1]
 
-        # We need only a single output channel for the single
-        # basis weights convolution but many for each input.
-        spline_ws = [s_w.reshape(1, 1, -1).repeat(sep_conv_groups, 1, 1)
-                     for s_w in spline_ws]
-        basis_conv = convdd_separable(
-            b_input, spline_ws, stride=stride, dilation=dilation,
-            groups=sep_conv_groups)
+        # At this point we just need to subsequently do 1d convolutions
+        # and permute the spatial axes in the meantime.
+        basis_conv = _cbs_convdd_separable(
+            b_input, spline_ws, list(stride), list(dilation))
 
         b_spatial_shape = basis_conv.shape[2:]
+
         # Each input is separately convolved. We now split the output
         # per-group.
         basis_conv = basis_conv.reshape(
-            b_groups, batch, group_ic, *b_spatial_shape)
+            b_groups, batch, group_ic, *basis_conv.shape[2:])
 
         # Iterate through each group and perform the required crop.
         for group_idx, shift, group_weight in shifts_and_weights:
