@@ -23,15 +23,15 @@ class Net(nn.Module):
     """Network example"""
     def __init__(self):
         super(Net, self).__init__()
-        #self.conv1 = nn.Conv2d(1, 32, 15, 1, padding=2)
-        #self.conv2 = nn.Conv2d(32, 64, 15, 1, padding=2, groups=4)
+        #self.conv1 = nn.Conv2d(1, 32, 3)
+        #self.conv2 = nn.Conv2d(32, 64, 3)
         self.conv1 = ebconv.nn.CBSConv(
-            1, 32, (15, 15), 3, 3, padding=2, bias=False)
+            1, 32, (7, 7), 1, 3, padding=2, bias=False)
         self.conv2 = ebconv.nn.CBSConv(
-            32, 64, (15, 15), 3, 3, padding=2, groups=4, bias=False)
+            32, 64, (7, 7), 1, 3, padding=2, groups=4, bias=False)
         self.dropout1 = torch.nn.Dropout2d(0.25)
         self.dropout2 = torch.nn.Dropout2d(0.5)
-        self.fc1 = torch.nn.Linear(1024, 128)
+        self.fc1 = torch.nn.Linear(9216, 128)
         self.fc2 = torch.nn.Linear(128, 10)
 
     # pylint: disable=arguments-differ
@@ -50,7 +50,6 @@ class Net(nn.Module):
         x = self.fc2(x)
         output = torch.nn.functional.log_softmax(x, dim=1)
         return output
-
 
 def train(args, model, device, train_loader, optimizer, epoch):
     """Optimization step."""

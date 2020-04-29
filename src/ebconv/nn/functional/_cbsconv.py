@@ -82,7 +82,7 @@ class SplineWeightsHashing():
         return hash(self) == hash(other)
 
 
-def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
+def _cbsconv_params(input_, kernel_x, weights, c, s, k,
                     dilation, stride):
     """Precompute the list of parameters required for each conv.
 
@@ -96,19 +96,21 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
     total_c = c.reshape(new_shape)
     total_s = s.reshape(new_shape)
 
-    weights_map = defaultdict(lambda: (set(), []))
+    weights_map = defaultdict(lambda: (set(), [], []))
     for i, (b_c, b_s) in enumerate(zip(total_c, total_s)):
         # For each dimension, crop the sampling values to fit
         # only the support of the spline.
-        bounds = BSplineElement.create_cardinal(
-            b_c.data.cpu().numpy(), b_s.data.cpu().numpy(), k
-        ).support_bounds().reshape(-1, 2)
+        spline = BSplineElement.create_cardinal(
+            b_c.data.cpu().numpy(), b_s.data.cpu().numpy(), k)
+        bounds = spline.support_bounds().reshape(-1, 2)
 
         # Select only the part of the domain that intesects with the
         # support.
         spline_x = [d_x[(d_x >= l_b) & (d_x <= u_b)]
                     for d_x, (l_b, u_b) in zip(kernel_x, bounds)]
 
+        # Empty result? The spline is outside the virtual kernel
+        # region. Skip.
         if sum([len(s_x) == 0 for s_x in spline_x]) > 0:
             continue
 
@@ -119,19 +121,30 @@ def _cbsconv_params(input_, output, kernel_x, weights, c, s, k,
         shift = [ddilation * len(torch.where(d_x < s_x[0])[0])
                  for d_x, s_x, ddilation in zip(kernel_x, spline_x, dilation)]
 
+        # What happens if a basis is 3 pixeks left but the stride is 2?
+        # This values serves the purpose of computing the right convolution
+        # if a stride != 1 is chosen.
         shift_stride_rem = tuple(s_h % s_t for s_h, s_t in zip(shift, stride))
 
         # Make the weights hashable.
         hashable_weights = SplineWeightsHashing(w_t, shift_stride_rem)
         group_index = i // n_c
         n_index = i % n_c
-        g_set, shifts_and_weights = weights_map[hashable_weights]
+        g_set, shifts_and_weights, samples = weights_map[hashable_weights]
         g_set.add(group_index)
-        shifts_and_weights.append(
-            (group_index, shift, weights[group_index, ..., n_index]))
+        shifts_and_weights.append((group_index, shift, n_index))
+        samples.append(w_t)
 
-    return [(key.l_t, key.shift_stride, sorted(i_set), shifts_and_weights)
-            for key, (i_set, shifts_and_weights) in weights_map.items()]
+    params = []
+    for key, (i_set, shifts_and_weights, samples) in weights_map.items():
+        samples_mean = list(zip(*samples))
+        samples_mean = [torch.stack(sample_axis).mean(0)
+                        for sample_axis in samples_mean]
+        params.append(
+            (samples_mean, key.shift_stride, sorted(i_set),
+             shifts_and_weights))
+
+    return params
 
 
 def _cbs_convdd_separable(input_, weights, stride, dilation):
@@ -231,7 +244,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
-        input_, output, kernel_x, weights, c, s, k, dilation, stride)
+        input_, kernel_x, weights, c, s, k, dilation, stride)
+
     stride, dilation = list(stride), list(dilation)
     for spline_ws, shift_stride, input_indices,\
         shifts_and_weights in bases_convs_params:
@@ -259,8 +273,9 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             b_groups, batch, group_ic, *basis_conv.shape[2:])
 
         # Iterate through each group and perform the required crop.
-        for group_idx, shift, group_weight in shifts_and_weights:
+        for group_idx, shift, n_index in shifts_and_weights:
             b_group = g2i[group_idx]
+            group_weight = weights[group_idx, ..., n_index]
             group_conv = basis_conv[b_group]
             shape_diff = b_spatial_shape - output_spatial_shape
             cropl = (shift - np.array(shift_stride)) // np.array(stride)
