@@ -235,7 +235,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     weights = weights.reshape(
         groups, group_oc, group_ic, n_c)
     output = torch.zeros(
-        groups, batch, group_oc, *output_spatial_shape, dtype=dtype,
+        groups, group_oc, batch, *output_spatial_shape, dtype=dtype,
         device=device)
 
     # Let's move the groups as first dimension as we will access them by index
@@ -246,7 +246,6 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     bases_convs_params = _cbsconv_params(
         input_, kernel_x, weights, c, s, k, dilation, stride)
 
-    stride, dilation = list(stride), list(dilation)
     for spline_ws, shift_stride, input_indices,\
         shifts_and_weights in bases_convs_params:
         g2i = {g: i for i, g in enumerate(input_indices)}
@@ -283,11 +282,11 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
             group_conv = crop(group_conv, crop_)
-            output[group_idx] += torch.tensordot(
-                group_weight, group_conv, dims=[(1,), (1,)]).transpose(0, 1)
+            t_d = torch.tensordot(group_weight, group_conv, dims=[(1,), (1,)])
+            output[group_idx] += t_d
 
-    # Revert back the group / batch swap
-    output = output.transpose(0, 1)
+    axes = np.arange(len(output.shape))
+    output = output.permute(2, 0, 1, *axes[3:])
     output = output.reshape(*output_shape)
     output = output if bias is None \
         else output + bias.reshape(1, -1, *((1,) * spatial_dims))

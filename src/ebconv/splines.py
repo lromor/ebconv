@@ -4,6 +4,8 @@ This module contains spline utility functions and
 classes.
 """
 
+import functools
+
 from typing import Iterable, List, Tuple, TypeVar, Union
 
 import numpy as np
@@ -13,6 +15,7 @@ from scipy.interpolate import BSpline as _BSpline
 from ebconv.operator import tensordot
 
 
+@functools.lru_cache()
 def uniform_knots(k: int) -> np.ndarray:
     """Generate uniform and centered knots.
 

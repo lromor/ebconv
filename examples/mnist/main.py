@@ -26,9 +26,9 @@ class Net(nn.Module):
         #self.conv1 = nn.Conv2d(1, 32, 3)
         #self.conv2 = nn.Conv2d(32, 64, 3)
         self.conv1 = ebconv.nn.CBSConv(
-            1, 32, (7, 7), 1, 3, padding=2, bias=False)
+            1, 32, (7, 7), 3, 2, padding=2, bias=False)
         self.conv2 = ebconv.nn.CBSConv(
-            32, 64, (7, 7), 1, 3, padding=2, groups=4, bias=False)
+            32, 64, (7, 7), 3, 2, padding=2, groups=4, bias=False)
         self.dropout1 = torch.nn.Dropout2d(0.25)
         self.dropout2 = torch.nn.Dropout2d(0.5)
         self.fc1 = torch.nn.Linear(9216, 128)
