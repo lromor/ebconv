@@ -265,8 +265,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             cropr = shape_diff - cropl
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
-            basis_conv = crop(basis_conv, crop_)
-            t_d = torch.tensordot(b_weights, basis_conv, dims=[(1,), (1,)])
+            cropped_conv = crop(basis_conv, crop_)
+            t_d = torch.tensordot(b_weights, cropped_conv, dims=[(1,), (1,)])
             output[basis_group_idx] += t_d
 
     output = output.reshape(output_channels, batch, *output_spatial_shape)
