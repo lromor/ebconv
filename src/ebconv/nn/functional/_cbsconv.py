@@ -57,7 +57,6 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
 
 _KOptionalType = Union[int, Iterable[Tuple[int, ...]]]
 
-
 def cbspline(sampling_x: torch.Tensor, c: torch.Tensor, s: torch.Tensor,
              k: _KOptionalType) -> List[torch.Tensor]:
     """Public interface to the functional to sample univariate bspines."""
@@ -91,13 +90,11 @@ def _cbsconv_params(input_, kernel_x, weights, c, s, k,
     """
     assert c.shape == s.shape
     n_c = weights.shape[-1]
-    new_shape = (-1, len(input_.shape[3:]))
+    c = c.reshape(-1, c.shape[-1])
+    s = s.reshape(-1, s.shape[-1])
 
-    total_c = c.reshape(new_shape)
-    total_s = s.reshape(new_shape)
-
-    weights_map = defaultdict(lambda: (set(), [], []))
-    for i, (b_c, b_s) in enumerate(zip(total_c, total_s)):
+    weights_map = defaultdict(lambda: ([], []))
+    for i, (b_c, b_s) in enumerate(zip(c, s)):
         # For each dimension, crop the sampling values to fit
         # only the support of the spline.
         spline = BSplineElement.create_cardinal(
@@ -128,21 +125,18 @@ def _cbsconv_params(input_, kernel_x, weights, c, s, k,
 
         # Make the weights hashable.
         hashable_weights = SplineWeightsHashing(w_t, shift_stride_rem)
-        group_index = i // n_c
+        basis_group_index = i // n_c
         n_index = i % n_c
-        g_set, shifts_and_weights, samples = weights_map[hashable_weights]
-        g_set.add(group_index)
-        shifts_and_weights.append((group_index, shift, n_index))
+        shifts_and_weights, samples = weights_map[hashable_weights]
+        shifts_and_weights.append((basis_group_index, shift, n_index))
         samples.append(w_t)
 
     params = []
-    for key, (i_set, shifts_and_weights, samples) in weights_map.items():
+    for key, (shifts_and_weights, samples) in weights_map.items():
         samples_mean = list(zip(*samples))
         samples_mean = [torch.stack(sample_axis).mean(0)
                         for sample_axis in samples_mean]
-        params.append(
-            (samples_mean, key.shift_stride, sorted(i_set),
-             shifts_and_weights))
+        params.append((samples_mean, key.shift_stride, shifts_and_weights))
 
     return params
 
@@ -177,15 +171,19 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     input.shape = batch, iC, iX, iY, iZ, ...
     kernel_size.shape = kH, kW, kD, ...
     weights.shape = oC, iC / groups, nc
-    c.shape = groups, nc, idim
-    s.shape = groups, nc, idim
+    c.shape = basis_groups, nc, idim
+    s.shape = basis_groups, nc, idim
 
-    The group notion is different from the usual torch one.
-    For each group, we require the same number of basis parameters
-    and values (c,s,k) across the filters. The weight though can differ
-    both group and filter wise.
+    There are two types of groups. The standard "group"
+    as in pytorch is associated with the groups parameter.
+    The grouping will only be applied for the weights, meaning
+    that the centers and scalings will be shared across the "standard"
+    groups but not the weights.
+    Another set of groups are the "channel_groups", these channels groups
+    allow different centers positions per filter per group of output channels.
     """
     assert input_.dtype == weights.dtype == c.dtype == s.dtype
+    assert c.shape == s.shape
     dtype = input_.dtype
     device = input_.device
     spatial_shape = input_.shape[2:]
@@ -194,7 +192,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     input_channels = input_.shape[1]
     output_channels, group_ic = weights.shape[0], weights.shape[1]
     n_c = weights.shape[-1]
-    group_oc = output_channels // groups
+    basis_groups = c.shape[0]
+    basis_groups_oc = output_channels // basis_groups
 
     if not isinstance(k, Iterable):
         k = ((k,) * spatial_dims)
@@ -209,8 +208,8 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         dilation = ((dilation,) * spatial_dims)
 
     if (np.array(spatial_shape) < np.array(kernel_size)).any():
-        raise RuntimeError("Kernel size can't be greater than actual"
-                           'input size')
+        raise RuntimeError(
+            "Kernel size can't be greater than actual input size")
 
     # Output tensor shape.
     output_shape = np.array(convolution_output_shape(
@@ -230,34 +229,26 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype, device=device)
                 for s in kernel_size]
 
-    input_ = input_.reshape(
-        batch, groups, group_ic, *spatial_shape)
     weights = weights.reshape(
-        groups, group_oc, group_ic, n_c)
+        basis_groups, basis_groups_oc, group_ic, n_c)
     output = torch.zeros(
-        groups, group_oc, batch, *output_spatial_shape, dtype=dtype,
-        device=device)
+        basis_groups, basis_groups_oc, batch, *output_spatial_shape,
+        dtype=dtype, device=device)
 
     # Let's move the groups as first dimension as we will access them by index
     # multiple times and they are supposed to be less than the batch size.
-    input_ = input_.transpose(0, 1)
+    #input_ = input_.transpose(0, 1)
+    conv_input = input_.reshape(batch, -1, *spatial_shape)
 
     # Presample the bsplines weights.
     bases_convs_params = _cbsconv_params(
         input_, kernel_x, weights, c, s, k, dilation, stride)
 
-    for spline_ws, shift_stride, input_indices,\
-        shifts_and_weights in bases_convs_params:
-        g2i = {g: i for i, g in enumerate(input_indices)}
-        b_input = input_[input_indices]
-        b_input = b_input.reshape(batch, -1, *spatial_shape)
-
+    for spline_ws, shift_stride, shifts_and_weights in bases_convs_params:
         # Crop the input to fit the striding.
         crop_shift_stride = [(s_s, 0) for s_s in shift_stride]
         crop_shift_stride = sum(crop_shift_stride, ())
-        b_input = crop(b_input, crop_shift_stride)
-
-        b_groups = len(g2i)
+        b_input = crop(conv_input, crop_shift_stride)
 
         # At this point we just need to subsequently do 1d convolutions
         # and permute the spatial axes in the meantime.
@@ -266,27 +257,20 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
         b_spatial_shape = basis_conv.shape[2:]
 
-        # Each input is separately convolved. We now split the output
-        # per-group.
-        basis_conv = basis_conv.reshape(
-            b_groups, batch, group_ic, *basis_conv.shape[2:])
-
         # Iterate through each group and perform the required crop.
-        for group_idx, shift, n_index in shifts_and_weights:
-            b_group = g2i[group_idx]
-            group_weight = weights[group_idx, ..., n_index]
-            group_conv = basis_conv[b_group]
+        for basis_group_idx, shift, n_index in shifts_and_weights:
+            b_weights = weights[basis_group_idx, ..., n_index]
             shape_diff = b_spatial_shape - output_spatial_shape
             cropl = (shift - np.array(shift_stride)) // np.array(stride)
             cropr = shape_diff - cropl
             crop_ = np.array((cropl, cropr))
             crop_ = crop_.T.flatten()
-            group_conv = crop(group_conv, crop_)
-            t_d = torch.tensordot(group_weight, group_conv, dims=[(1,), (1,)])
-            output[group_idx] += t_d
+            basis_conv = crop(basis_conv, crop_)
+            t_d = torch.tensordot(b_weights, basis_conv, dims=[(1,), (1,)])
+            output[basis_group_idx] += t_d
 
-    axes = np.arange(len(output.shape))
-    output = output.permute(2, 0, 1, *axes[3:])
+    output = output.reshape(output_channels, batch, *output_spatial_shape)
+    output = output.transpose(0, 1)
     output = output.reshape(*output_shape)
     output = output if bias is None \
         else output + bias.reshape(1, -1, *((1,) * spatial_dims))

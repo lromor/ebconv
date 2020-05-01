@@ -21,6 +21,9 @@ class CBSConv(torch.nn.Module):
                  stride: Union[Tuple[int, ...], int] = 1,
                  padding: Union[Tuple[int, ...], int] = 0,
                  dilation: Union[Tuple[int, ...], int] = 1,
+                 adaptive_centers=True,
+                 adaptive_scalings=False,
+                 basis_groups=1,
                  groups=1, bias=True, padding_mode='zeros'):
         super().__init__()
         assert isinstance(kernel_size, Tuple)
@@ -56,8 +59,12 @@ class CBSConv(torch.nn.Module):
 
         self.weights = Parameter(
             torch.Tensor(out_channels, in_channels // groups, nc))
-        self.centers = Parameter(torch.Tensor(groups, nc, dims))
-        self.scalings = Parameter(torch.Tensor(groups, nc, dims))
+        self.centers = Parameter(torch.Tensor(basis_groups, nc, dims))
+        if not adaptive_centers:
+            self.centers.requires_grad = False
+        self.scalings = Parameter(torch.Tensor(basis_groups, nc, dims))
+        if not adaptive_scalings:
+            self.scalings.requires_grad = False
 
         if bias:
             self.bias = Parameter(torch.Tensor(out_channels))
@@ -72,10 +79,11 @@ class CBSConv(torch.nn.Module):
                 create_random_centers(self.kernel_size, self.nc)).float()
             for _ in range(self.groups)])
 
-        factor = self.nc ** (1 / self.dims)
-        scaling = [size / (factor * (self.k + 1)) for size in self.kernel_size]
+        # factor = self.nc ** (1 / self.dims)
+        # scaling = [size / (factor * (self.k + 1))
+        #            for size in self.kernel_size]
         self.scalings.data = torch.ones(self.groups, self.nc, self.dims)
-        self.scalings.data *= torch.Tensor(scaling).reshape(1, 1, self.dims)
+        # self.scalings.data *= torch.Tensor(scaling).reshape(1, 1, self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
         if self.bias is not None:
