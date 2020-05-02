@@ -63,6 +63,7 @@ confidence=
 # --disable=W".
 disable=print-statement,
         design,
+        isinstance-second-argument-not-valid-type,
         parameter-unpacking,
         unpacking-in-except,
         old-raise-syntax,
