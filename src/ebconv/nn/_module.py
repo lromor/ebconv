@@ -23,8 +23,7 @@ class CBSConv(torch.nn.Module):
                  dilation: Union[Tuple[int, ...], int] = 1,
                  adaptive_centers=True,
                  adaptive_scalings=False,
-                 basis_groups=1,
-                 groups=1, bias=True, padding_mode='zeros'):
+                 basis_groups=1, bias=True, padding_mode='zeros'):
         super().__init__()
         assert isinstance(kernel_size, Tuple)
         if k < 1:
@@ -40,10 +39,8 @@ class CBSConv(torch.nn.Module):
         if isinstance(dilation, int):
             dilation = ((dilation,) * dims)
 
-        if in_channels % groups != 0:
-            raise ValueError('in_channels must be divisible by groups')
-        if out_channels % groups != 0:
-            raise ValueError('out_channels must be divisible by groups')
+        if out_channels % basis_groups != 0:
+            raise ValueError('out_channels must be divisible by basis_groups')
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -54,11 +51,11 @@ class CBSConv(torch.nn.Module):
         self.stride = stride
         self.padding = padding
         self.dilation = dilation
-        self.groups = groups
+        self.basis_groups = basis_groups
         self.padding_mode = padding_mode
 
         self.weights = Parameter(
-            torch.Tensor(out_channels, in_channels // groups, nc))
+            torch.Tensor(out_channels, in_channels, nc))
         self.centers = Parameter(torch.Tensor(basis_groups, nc, dims))
         if not adaptive_centers:
             self.centers.requires_grad = False
@@ -77,12 +74,12 @@ class CBSConv(torch.nn.Module):
         self.centers.data = torch.stack([
             torch.from_numpy(
                 create_random_centers(self.kernel_size, self.nc)).float()
-            for _ in range(self.groups)])
+            for _ in range(self.basis_groups)])
 
         # factor = self.nc ** (1 / self.dims)
         # scaling = [size / (factor * (self.k + 1))
         #            for size in self.kernel_size]
-        self.scalings.data = torch.ones(self.groups, self.nc, self.dims)
+        self.scalings.data = torch.ones(self.basis_groups, self.nc, self.dims)
         # self.scalings.data *= torch.Tensor(scaling).reshape(1, 1, self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
@@ -98,4 +95,4 @@ class CBSConv(torch.nn.Module):
         return cbsconv(
             input_, self.kernel_size, self.weights, self.centers,
             self.scalings, self.k, self.bias, self.stride, self.padding,
-            self.dilation, self.groups)
+            self.dilation)

@@ -164,8 +164,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
             bias: Optional[torch.Tensor] = None,
             stride: Union[int, Tuple[int, ...]] = 1,
             padding: Union[int, Tuple[int, ...]] = 0,
-            dilation: Union[int, Tuple[int, ...]] = 1,
-            groups: int = 1) -> torch.Tensor:
+            dilation: Union[int, Tuple[int, ...]] = 1) -> torch.Tensor:
     """Compute a bspline separable convolution.
 
     input.shape = batch, iC, iX, iY, iZ, ...

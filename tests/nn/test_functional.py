@@ -147,12 +147,12 @@ def test_autograd_univariate_cardinalbspline(c, s, k):
 @pytest.mark.parametrize('stride', [1, 2])
 @pytest.mark.parametrize('k', [2])
 @pytest.mark.parametrize('dim', [1, 2, 3])
-@pytest.mark.parametrize('i_c,o_c,groups,basis_groups', [
-    (6, 4, 1, 2),
-    (3, 3, 1, 3),
-    (3, 3, 1, 1),
+@pytest.mark.parametrize('i_c,o_c,basis_groups', [
+    (6, 4, 2),
+    (3, 3, 3),
+    (3, 3, 1),
 ])
-def test_cbsconv(i_c, o_c, groups, basis_groups,
+def test_cbsconv(i_c, o_c, basis_groups,
                  dim, k, stride, padding, dilation):
     """Test the cbsconv torch functional."""
     # Extra params
@@ -164,18 +164,18 @@ def test_cbsconv(i_c, o_c, groups, basis_groups,
     kernel_size = tuple(kernel_min_size + i for i in range(dim))
 
     # Generate a random set of centers, scalings and weights.
-    group_ic = i_c // groups
     basis_group_output_channels = o_c // basis_groups
 
     # Generate random centers and scalings.
     centers = create_random_centers(
         kernel_size,
         n_c * basis_groups,
-        unique=False
+        unique=False,
+        integrally_spaced=True
     ).reshape(basis_groups, n_c, -1)
     scalings = np.random.rand(*centers.shape) * 3 + 0.5
     weights = np.random.rand(
-        basis_groups, basis_group_output_channels, group_ic, n_c)
+        basis_groups, basis_group_output_channels, i_c, n_c)
 
     virtual_weights = []
 
@@ -197,7 +197,7 @@ def test_cbsconv(i_c, o_c, groups, basis_groups,
     centers.requires_grad = True
     scalings = torch.from_numpy(scalings)
     scalings.requires_grad = True
-    weights = torch.from_numpy(weights.reshape(o_c, group_ic, n_c))
+    weights = torch.from_numpy(weights.reshape(o_c, i_c, n_c))
     weights.requires_grad = True
     virtual_weights = torch.cat(virtual_weights)
     virtual_weights.requires_grad = True
@@ -211,11 +211,11 @@ def test_cbsconv(i_c, o_c, groups, basis_groups,
     tconv = D2F[dim]
     torch_output = tconv(
         input_, virtual_weights, bias=bias, stride=stride, padding=padding,
-        dilation=dilation, groups=groups)
+        dilation=dilation)
 
     output = cbsconv(input_, kernel_size, weights, centers, scalings, k,
                      bias=bias, stride=stride, padding=padding,
-                     dilation=dilation, groups=groups)
+                     dilation=dilation)
     assert torch.allclose(torch_output, output)
 
 
