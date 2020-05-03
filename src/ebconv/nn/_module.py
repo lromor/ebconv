@@ -22,7 +22,7 @@ class CBSConv(torch.nn.Module):
                  padding: Union[Tuple[int, ...], int] = 0,
                  dilation: Union[Tuple[int, ...], int] = 1,
                  adaptive_centers=True,
-                 adaptive_scalings=False,
+                 adaptive_scalings=True,
                  basis_groups=1, bias=True, padding_mode='zeros'):
         super().__init__()
         assert isinstance(kernel_size, Tuple)
@@ -92,7 +92,8 @@ class CBSConv(torch.nn.Module):
     # pylint: disable=arguments-differ
     def forward(self, input_):
         """Implement the forward pass of the module."""
+        centers = torch.round(self.centers)
         return cbsconv(
-            input_, self.kernel_size, self.weights, self.centers,
+            input_, self.kernel_size, self.weights, centers,
             self.scalings, self.k, self.bias, self.stride, self.padding,
             self.dilation)

@@ -206,7 +206,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     if not isinstance(dilation, Tuple):
         dilation = ((dilation,) * spatial_dims)
 
-    if (np.array(spatial_shape) < np.array(kernel_size)).any():
+    if (np.array(spatial_shape) + padding < np.array(kernel_size)).any():
         raise RuntimeError(
             "Kernel size can't be greater than actual input size")
 
