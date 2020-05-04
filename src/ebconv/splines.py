@@ -127,7 +127,6 @@ class BSplineElement():
         knots = [uniform_knots(k_i) * s_i + c_i
                  for c_i, s_i, k_i in zip(c, s, k)]
         bspline = cls.from_knots(knots)
-        assert bspline.is_cardinal()
         return bspline
 
     def derivative(self) -> _TBSplineElementBase:
@@ -151,7 +150,7 @@ class BSplineElement():
         """Return true if knots are uniformly spaced."""
         spacing = tuple(map(np.ediff1d, self.knots()))
         return np.array(
-            tuple(np.isclose(sp[0], sp).all() for sp in spacing)).all()
+            tuple(np.isclose(sp.mean(), sp).all() for sp in spacing)).all()
 
     def get_order(self) -> List[int]:
         """Return the spline order for every dimension."""
