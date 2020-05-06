@@ -4,9 +4,8 @@
 [2]: https://docs.nvidia.com/deeplearning/sdk/pdf/cuDNN-API.pdf
 [3]: https://travis-ci.com/lromor/ebconv.svg?token=qj78wiWyraZW4FD7pwLr&branch=master
 
-[![Build Status][3]](https://travis-ci.com/lromor/ebconv)
 
-# EBC✸NV 
+# EBC✸NV [![Build Status][3]](https://travis-ci.com/lromor/ebconv)
 
 Equivariant B-splines CONVolutions.
 
