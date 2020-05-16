@@ -30,7 +30,6 @@ class CBSConv(torch.nn.Module):
                  dilation: Union[Tuple[int, ...], int] = 1,
                  adaptive_centers: bool = True,
                  adaptive_scalings: bool = True,
-                 integral_values: bool = False,
                  basis_groups=1, bias=True,
                  padding_mode='zeros'):
         super().__init__()
@@ -76,7 +75,6 @@ class CBSConv(torch.nn.Module):
         self.dilation = dilation
         self.adaptive_centers = adaptive_centers
         self.adaptive_scalings = adaptive_scalings
-        self.integral_values = integral_values
         self.layout = layout
         self.basis_groups = basis_groups
         self.padding_mode = padding_mode
@@ -94,12 +92,6 @@ class CBSConv(torch.nn.Module):
             self.bias = Parameter(torch.Tensor(out_channels))
         else:
             self.register_parameter('bias', None)
-
-        if integral_values:
-            self.register_buffer('offsets', torch.Tensor([
-                0.5 if size % 2 == 0 else 0
-                for size in self.kernel_size
-            ]).reshape(1, 1, -1))
 
         with torch.no_grad():
             self.reset_parameters()
@@ -130,13 +122,8 @@ class CBSConv(torch.nn.Module):
     # pylint: disable=arguments-differ
     def forward(self, input_):
         """Implement the forward pass of the module."""
-        centers = self.centers
-        if self.integral_values:
-            offsets = self.offsets
-            centers = torch.round(centers + offsets) - offsets
-
         return cbsconv(
-            input_, self.kernel_size, self.weights, centers,
+            input_, self.kernel_size, self.weights, self.centers,
             self.scalings, self.k, self.bias, self.stride, self.padding,
             self.dilation)
 
@@ -144,7 +131,6 @@ class CBSConv(torch.nn.Module):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'
              ', nc={nc}, adaptive_centers={adaptive_centers}'
              ', adaptive_scalings={adaptive_scalings}'
-             ', integral_values={integral_values}'
              ', layout={layout}, stride={stride}')
         if self.k != 2:
             s += ', k={k}'
