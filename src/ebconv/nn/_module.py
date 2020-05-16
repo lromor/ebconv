@@ -1,6 +1,7 @@
 """Implements a torch module for the bspline convolution."""
 
 import math
+from functools import reduce
 
 from typing import Tuple, Union
 
@@ -60,9 +61,11 @@ class CBSConv(torch.nn.Module):
             raise ValueError('Layout "random" requires the '
                              'number of centers to be specified')
 
-        if layout == 'grid' and nc is not None:
-            warnings.warn('the parameter number of centers(nc) when'
-                          ' layout is grid is ignored')
+        if layout == 'grid':
+            if nc is not None:
+                warnings.warn('the parameter number of centers(nc) when'
+                              ' layout is grid is ignored')
+            nc = reduce(lambda x, y: x * y, kernel_size)
 
         self.in_channels = in_channels
         self.out_channels = out_channels
