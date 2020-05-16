@@ -17,9 +17,10 @@ def test_cbconv_module(k):
 
     if k < 1:
         with pytest.raises(ValueError):
-            module = CBSConv(3, 1, (20, 20), 8, k, padding=2, bias=True)
+            module = CBSConv(
+                3, 1, (20, 20), 'random', 8, k, padding=2, bias=True)
         return
-    module = CBSConv(3, 1, (20, 20), 8, k, padding=2, bias=True)
+    module = CBSConv(3, 1, (20, 20), 'random', 8, k, padding=2, bias=True)
 
     for param in module.parameters():
         assert param.dtype == torch.float

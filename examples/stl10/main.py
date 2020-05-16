@@ -25,13 +25,13 @@ class Net(nn.Module):
         super(Net, self).__init__()
         #self.conv1 = nn.Conv2d(3, 32, 64, 1, padding=2)
         #self.conv2 = nn.Conv2d(32, 64, 32, 1, padding=2, groups=4)
-        self.conv1 = ebconv.nn.CBSConv(
-            3, 32, (64, 64), 32, 3, padding=2, basis_groups=4, bias=False)
-        self.conv2 = ebconv.nn.CBSConv(
-            32, 64, (32, 32), 16, 3, padding=2, basis_groups=4, bias=False)
+        self.conv1 = ebconv.nn.CBSConv2d(
+            3, 16, 64, nc=8, k=3, padding=8, basis_groups=4, bias=False)
+        self.conv2 = ebconv.nn.CBSConv2d(
+            16, 32, 38, nc=4, k=3, padding=4, basis_groups=4, bias=False)
         self.dropout1 = torch.nn.Dropout2d(0.25)
         self.dropout2 = torch.nn.Dropout2d(0.5)
-        self.fc1 = torch.nn.Linear(1600, 128)
+        self.fc1 = torch.nn.Linear(3200, 128)
         self.fc2 = torch.nn.Linear(128, 10)
 
     # pylint: disable=arguments-differ
@@ -97,7 +97,7 @@ def main():
         '--batch-size', type=int, default=64, metavar='N',
         help='input batch size for training (default: 64)')
     parser.add_argument(
-        '--test-batch-size', type=int, default=1000, metavar='N',
+        '--test-batch-size', type=int, default=128, metavar='N',
         help='input batch size for testing (default: 1000)')
     parser.add_argument(
         '--epochs', type=int, default=14, metavar='N',
