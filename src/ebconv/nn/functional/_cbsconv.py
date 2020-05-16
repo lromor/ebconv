@@ -169,7 +169,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
 
     input.shape = batch, iC, iX, iY, iZ, ...
     kernel_size.shape = kH, kW, kD, ...
-    weights.shape = oC, iC / groups, nc
+    weights.shape = oC, iC, nc
     c.shape = basis_groups, nc, idim
     s.shape = basis_groups, nc, idim
 
@@ -207,8 +207,14 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
         dilation = ((dilation,) * spatial_dims)
 
     if (np.array(spatial_shape) + padding < np.array(kernel_size)).any():
-        raise RuntimeError(
+        raise ValueError(
             "Kernel size can't be greater than actual input size")
+
+    if group_ic != input_channels:
+        raise ValueError(
+            "Weights second axis(%d) should match"
+            " the input channels(%d)."
+            % (group_ic, input_channels))
 
     # Output tensor shape.
     output_shape = np.array(convolution_output_shape(

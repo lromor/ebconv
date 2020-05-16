@@ -31,7 +31,7 @@ class CBSConv(torch.nn.Module):
                  dilation: Union[Tuple[int, ...], int] = 1,
                  adaptive_centers: bool = True,
                  adaptive_scalings: bool = True,
-                 basis_groups=1, bias=True,
+                 basis_groups=1, bias=False,
                  padding_mode='zeros'):
         super().__init__()
         if not isinstance(kernel_size, Tuple):
