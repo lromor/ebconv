@@ -31,8 +31,9 @@ class CBSConv(torch.nn.Module):
                  dilation: Union[Tuple[int, ...], int] = 1,
                  adaptive_centers: bool = True,
                  adaptive_scalings: bool = True,
-                 basis_groups=1, bias=False,
-                 padding_mode='zeros'):
+                 basis_groups: int = 1, bias: bool = False,
+                 padding_mode: str = 'zeros',
+                 separable: bool = False):
         super().__init__()
         if not isinstance(kernel_size, Tuple):
             raise ValueError('kernel_size should be a Tuple')
@@ -81,6 +82,7 @@ class CBSConv(torch.nn.Module):
         self.layout = layout
         self.basis_groups = basis_groups
         self.padding_mode = padding_mode
+        self.separable = separable
 
         self.weights = Parameter(
             torch.Tensor(out_channels, in_channels, nc))
@@ -128,7 +130,7 @@ class CBSConv(torch.nn.Module):
         return cbsconv(
             input_, self.kernel_size, self.weights, self.centers,
             self.scalings, self.k, self.bias, self.stride, self.padding,
-            self.dilation)
+            self.dilation, separable=self.separable)
 
     def extra_repr(self):
         s = ('{in_channels}, {out_channels}, kernel_size={kernel_size}'

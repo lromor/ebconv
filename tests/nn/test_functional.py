@@ -213,10 +213,19 @@ def test_cbsconv(i_c, o_c, basis_groups,
         input_, virtual_weights, bias=bias, stride=stride, padding=padding,
         dilation=dilation)
 
+    # Non separable method
     output = cbsconv(input_, kernel_size, weights, centers, scalings, k,
                      bias=bias, stride=stride, padding=padding,
-                     dilation=dilation)
+                     dilation=dilation, separable=False)
     assert torch.allclose(torch_output, output)
+
+    # Separable method
+    output = cbsconv(input_, kernel_size, weights, centers, scalings, k,
+                     bias=bias, stride=stride, padding=padding,
+                     dilation=dilation, separable=True)
+
+    assert torch.allclose(torch_output, output)
+
 
 
 @pytest.mark.parametrize('k', [2, 3, 4])

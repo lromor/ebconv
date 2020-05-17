@@ -2,6 +2,8 @@
 
 from collections import defaultdict
 
+from functools import reduce
+
 from typing import Iterable, List, Optional, Tuple, Union
 
 import numpy as np
@@ -158,31 +160,9 @@ def _cbs_convdd_separable(input_, weights, stride, dilation):
         conv.permute(0, 1, *paxes), weights, stride, dilation)
 
 
-def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
-            weights: torch.Tensor, c: torch.Tensor,
-            s: torch.Tensor, k: int,
-            bias: Optional[torch.Tensor] = None,
-            stride: Union[int, Tuple[int, ...]] = 1,
-            padding: Union[int, Tuple[int, ...]] = 0,
-            dilation: Union[int, Tuple[int, ...]] = 1) -> torch.Tensor:
-    """Compute a bspline separable convolution.
-
-    input.shape = batch, iC, iX, iY, iZ, ...
-    kernel_size.shape = kH, kW, kD, ...
-    weights.shape = oC, iC, nc
-    c.shape = basis_groups, nc, idim
-    s.shape = basis_groups, nc, idim
-
-    There are two types of groups. The standard "group"
-    as in pytorch is associated with the groups parameter.
-    The grouping will only be applied for the weights, meaning
-    that the centers and scalings will be shared across the "standard"
-    groups but not the weights.
-    Another set of groups are the "channel_groups", these channels groups
-    allow different centers positions per filter per group of output channels.
-    """
-    assert input_.dtype == weights.dtype == c.dtype == s.dtype
-    assert c.shape == s.shape
+def _cbsconv_separable_impl(input_, kernel_size, weights, c, s, k,
+                            bias, stride, padding, dilation):
+    """Compute a bspline separable convolution."""
     dtype = input_.dtype
     device = input_.device
     spatial_shape = input_.shape[2:]
@@ -194,30 +174,10 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     basis_groups = c.shape[0]
     basis_groups_oc = output_channels // basis_groups
 
-    if not isinstance(k, Iterable):
-        k = ((k,) * spatial_dims)
-
-    if not isinstance(stride, Tuple):
-        stride = ((stride,) * spatial_dims)
-
-    if not isinstance(padding, Tuple):
-        padding = ((padding,) * spatial_dims)
-
-    if not isinstance(dilation, Tuple):
-        dilation = ((dilation,) * spatial_dims)
-
-    padded_input_shape = np.array(padding) * 2
-    padded_input_shape += np.array(spatial_shape)
-    if (padded_input_shape < np.array(kernel_size)).any():
-        print(kernel_size, spatial_shape, padding)
-        raise ValueError(
-            "Kernel size can't be greater than actual input size")
-
-    if group_ic != input_channels:
-        raise ValueError(
-            "Weights second axis(%d) should match"
-            " the input channels(%d)."
-            % (group_ic, input_channels))
+    # Sampling domain.
+    # pylint: disable=E1102
+    kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype, device=device)
+                for s in kernel_size]
 
     # Output tensor shape.
     output_shape = np.array(convolution_output_shape(
@@ -232,17 +192,11 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     input_ = torch.nn.functional.pad(input_, pad)
     spatial_shape = input_.shape[2:]
 
-    # Sampling domain.
-    # pylint: disable=E1102
-    kernel_x = [torch.tensor(sampling_domain(s), dtype=dtype, device=device)
-                for s in kernel_size]
-
     weights = weights.reshape(
         basis_groups, basis_groups_oc, group_ic, n_c)
     output = torch.zeros(
         basis_groups, basis_groups_oc, batch, *output_spatial_shape,
         dtype=dtype, device=device)
-
     # Let's move the groups as first dimension as we will access them by index
     # multiple times and they are supposed to be less than the batch size.
     #input_ = input_.transpose(0, 1)
@@ -283,3 +237,116 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     output = output if bias is None \
         else output + bias.reshape(1, -1, *((1,) * spatial_dims))
     return output
+
+
+_TORCH_CONVS_MAP = {
+    1: torch.nn.functional.conv1d,
+    2: torch.nn.functional.conv2d,
+    3: torch.nn.functional.conv3d,
+}
+
+
+def _cbsconv_sample_impl(input_, kernel_size, weights, c, s, k, bias,
+                         stride, padding, dilation):
+    """Implementation of the simple bspline sampling method."""
+    dtype = input_.dtype
+    device = input_.device
+    spatial_shape = input_.shape[2:]
+    spatial_dims = len(spatial_shape)
+    basis_groups = c.shape[0]
+    weights = weights.reshape(basis_groups, -1, *weights.shape[1:])
+
+    # Sampling domain.
+    # pylint: disable=E1102
+    kernel_x = [torch.tensor(sampling_domain(size), dtype=dtype, device=device)
+                for size in kernel_size]
+
+    kernel = []
+    for i in range(basis_groups):
+        bases = []
+        g_weights = weights[i]
+        for g_c, g_s in zip(c[i], s[i]):
+            samples = cbspline(kernel_x, g_c, g_s, k)
+            bases.append(
+                reduce(lambda x, y: torch.tensordot(x, y, dims=0), samples))
+        bases = torch.stack(bases)
+        kernel.append(
+            torch.tensordot(g_weights, bases, dims=1))
+
+    kernel = torch.cat(kernel)
+    conv = _TORCH_CONVS_MAP[spatial_dims]
+    return conv(input_, kernel, bias, stride=stride,
+                padding=padding, dilation=dilation)
+
+
+def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
+            weights: torch.Tensor, c: torch.Tensor,
+            s: torch.Tensor, k: int,
+            bias: Optional[torch.Tensor] = None,
+            stride: Union[int, Tuple[int, ...]] = 1,
+            padding: Union[int, Tuple[int, ...]] = 0,
+            dilation: Union[int, Tuple[int, ...]] = 1,
+            separable: bool = False) -> torch.Tensor:
+    """Compute a bspline separable convolution.
+
+    input.shape = batch, iC, iX, iY, iZ, ...
+    kernel_size.shape = kH, kW, kD, ...
+    weights.shape = oC, iC, nc
+    c.shape = basis_groups, nc, idim
+    s.shape = basis_groups, nc, idim
+
+    There are two types of groups. The standard "group"
+    as in pytorch is associated with the groups parameter.
+    The grouping will only be applied for the weights, meaning
+    that the centers and scalings will be shared across the "standard"
+    groups but not the weights.
+    Another set of groups are the "channel_groups", these channels groups
+    allow different centers positions per filter per group of output channels.
+    Sample kernel allows to directly sampling the set of
+    bsplines in a single kernel and then perform the convolution.
+    """
+    assert input_.dtype == weights.dtype == c.dtype == s.dtype
+    assert c.shape == s.shape
+    spatial_shape = input_.shape[2:]
+    spatial_dims = len(spatial_shape)
+    input_channels = input_.shape[1]
+    dims = len(kernel_size)
+    assert dims == spatial_dims
+    _, group_ic = weights.shape[0], weights.shape[1]
+
+    if not isinstance(k, Iterable):
+        k = ((k,) * spatial_dims)
+
+    if not isinstance(stride, Tuple):
+        stride = ((stride,) * spatial_dims)
+
+    if not isinstance(padding, Tuple):
+        padding = ((padding,) * spatial_dims)
+
+    if not isinstance(dilation, Tuple):
+        dilation = ((dilation,) * spatial_dims)
+
+    padded_input_shape = np.array(padding) * 2
+    padded_input_shape += np.array(spatial_shape)
+    if (padded_input_shape < np.array(kernel_size)).any():
+        print(kernel_size, spatial_shape, padding)
+        raise ValueError(
+            "Kernel size can't be greater than actual input size")
+
+    if group_ic != input_channels:
+        raise ValueError(
+            "Weights second axis(%d) should match"
+            " the input channels(%d)."
+            % (group_ic, input_channels))
+
+    if dims not in (1, 2, 3) and separable is False:
+        raise ValueError(
+            "The sampling implementation works only for dims: 1, 2, 3."
+            " Found %d dims instead." % dims)
+
+    impl = _cbsconv_sample_impl
+    if separable:
+        impl = _cbsconv_separable_impl
+
+    return impl(input_, kernel_size, weights, c, s, k,
+                bias, stride, padding, dilation)
