@@ -123,7 +123,7 @@ def test_convdd_separable(i_c, o_c, groups, w_size, dim, stride,
     assert torch.allclose(torch_output, output)
 
 
-@pytest.mark.parametrize('k', [2, 3])
+@pytest.mark.parametrize('k', [0, 1, 2, 3])
 @pytest.mark.parametrize('s', [0.1, 1.0, 2.0])
 @pytest.mark.parametrize('c', [0.0, 0.3, -5.0])
 def test_autograd_univariate_cardinalbspline(c, s, k):
@@ -138,23 +138,29 @@ def test_autograd_univariate_cardinalbspline(c, s, k):
     s = torch.tensor(s, dtype=torch.double, requires_grad=True).reshape(1)
 
     params = (input_, c, s, k)
-    torch.autograd.gradcheck(UnivariateCardinalBSpline.apply,
-                             params, eps=1e-6, atol=1e-6)
+
+    if k == 0:
+        with pytest.warns(UserWarning):
+            torch.autograd.gradcheck(UnivariateCardinalBSpline.apply,
+                                     params, eps=1e-6, atol=1e-6)
+    else:
+        torch.autograd.gradcheck(UnivariateCardinalBSpline.apply,
+                                 params, eps=1e-6, atol=1e-6)
 
 
 @pytest.mark.parametrize('dilation', [1, 2])
 @pytest.mark.parametrize('padding', [0, 1])
-@pytest.mark.parametrize('stride', [1, 2])
-@pytest.mark.parametrize('k', [2])
+@pytest.mark.parametrize('stride', [1, 2, 3])
+@pytest.mark.parametrize('k', [0, 1, 2])
 @pytest.mark.parametrize('dim', [1, 2, 3])
 @pytest.mark.parametrize('i_c,o_c,basis_groups', [
     (6, 4, 2),
     (3, 3, 3),
     (3, 3, 1),
 ])
-def test_cbsconv(i_c, o_c, basis_groups,
-                 dim, k, stride, padding, dilation):
-    """Test the cbsconv torch functional."""
+def test_cbsconv_forward(i_c, o_c, basis_groups,
+                         dim, k, stride, padding, dilation):
+    """Test the cbsconv torch functional forward pass."""
     # Extra params
     batch = 4
     n_c = 1
@@ -194,13 +200,13 @@ def test_cbsconv(i_c, o_c, basis_groups,
             torch.from_numpy(np.tensordot(g_weights, bases, axes=1)))
 
     centers = torch.from_numpy(centers)
-    centers.requires_grad = True
+    centers.requires_grad = False
     scalings = torch.from_numpy(scalings)
-    scalings.requires_grad = True
+    scalings.requires_grad = False
     weights = torch.from_numpy(weights.reshape(o_c, i_c, n_c))
-    weights.requires_grad = True
+    weights.requires_grad = False
     virtual_weights = torch.cat(virtual_weights)
-    virtual_weights.requires_grad = True
+    virtual_weights.requires_grad = False
 
     bias = torch.rand(o_c, dtype=torch.double)
 
@@ -233,7 +239,7 @@ def test_cbsconv(i_c, o_c, basis_groups,
     (5, 3), (-2, 4), (-2, -3),
     (2, 1), (1, -2), (-7, 4)
 ])
-def test_csbsconv_grad(shift, k):
+def test_cbsconv_grad(shift, k):
     """Test the direction of the gradient for a simple example."""
     input_ = torch.zeros(1, 1, 31, 31)
     input_[:, :, 15, 15] = 1

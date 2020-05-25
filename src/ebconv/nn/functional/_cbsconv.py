@@ -6,6 +6,8 @@ from functools import reduce
 
 from typing import Iterable, List, Optional, Tuple, Union
 
+import warnings
+
 import numpy as np
 
 import torch
@@ -32,7 +34,6 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
         s_n = s.data.item()
 
         spline = BSplineElement.create_cardinal(c_n, s_n, k)
-        dspline = spline.derivative()
 
         # pylint: disable=E1102
         ctx.input_ = input_
@@ -40,8 +41,15 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
         ctx.c = c
 
         y = spline(x_n)
-        ctx.derivative = torch.tensor(
-            dspline(x_n), dtype=input_.dtype, device=device)
+
+        if k == 0:
+            if c.requires_grad or s.requires_grad:
+                warnings.warn('0-order spline gradient is not supported.')
+            ctx.derivative = None
+        else:
+            dspline = spline.derivative()
+            ctx.derivative = torch.tensor(
+                dspline(x_n), dtype=input_.dtype, device=device)
 
         # pylint: disable=E1102
         return torch.tensor(y, dtype=input_.dtype, device=device)

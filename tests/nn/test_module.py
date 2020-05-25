@@ -9,7 +9,7 @@ from ebconv.nn import CBSConv
 
 @pytest.mark.parametrize('adaptive_centers', [True, False])
 @pytest.mark.parametrize('adaptive_scalings', [True, False])
-@pytest.mark.parametrize('k', [0, 1, 2, 3])
+@pytest.mark.parametrize('k', [-1, 0, 1, 2, 3])
 @pytest.mark.parametrize('nc', [None, (20)])
 @pytest.mark.parametrize('layout', ['grid', 'random'])
 def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
@@ -26,7 +26,7 @@ def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
             adaptive_centers=adaptive_centers,
             adaptive_scalings=adaptive_scalings)
 
-    if k < 1:
+    if k < 0:
         with pytest.raises(ValueError):
             module = create_module()
         return
@@ -49,6 +49,11 @@ def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
     assert module.scalings.requires_grad == adaptive_scalings
     assert module.weights.requires_grad
 
-    y = module(input_)
+    if k == 0 and (adaptive_centers or adaptive_scalings):
+        with pytest.warns(UserWarning):
+            y = module(input_)
+    else:
+        y = module(input_)
+
     assert y.dtype == torch.float
     assert y.requires_grad

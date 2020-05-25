@@ -38,8 +38,8 @@ class CBSConv(torch.nn.Module):
         if not isinstance(kernel_size, Tuple):
             raise ValueError('kernel_size should be a Tuple')
 
-        if k < 1:
-            raise ValueError('k must be >= 1')
+        if k < 0:
+            raise ValueError('k must be >= 0')
 
         dims = len(kernel_size)
 
