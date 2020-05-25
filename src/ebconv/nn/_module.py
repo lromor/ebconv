@@ -104,18 +104,18 @@ class CBSConv(torch.nn.Module):
     def reset_parameters(self):
         """Reset parameters using default initializers."""
         if self.layout == 'grid':
-            self.centers = Parameter(torch.stack([
+            self.centers.data = torch.stack([
                 torch.from_numpy(
                     create_uniform_grid(self.kernel_size)).float()
-                for _ in range(self.basis_groups)]))
+                for _ in range(self.basis_groups)])
         else:
-            self.centers = Parameter(torch.stack([
+            self.centers.data = torch.stack([
                 torch.from_numpy(
                     create_random_centers(self.kernel_size, self.nc)).float()
-                for _ in range(self.basis_groups)]))
+                for _ in range(self.basis_groups)])
 
-        self.scalings.data = Parameter(
-            torch.ones(self.basis_groups, self.nc, self.dims))
+        self.scalings.data = torch.ones(
+            self.basis_groups, self.nc, self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
         if self.bias is not None:
