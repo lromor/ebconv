@@ -173,6 +173,7 @@ def test_cbsconv_forward(i_c, o_c, basis_groups,
     basis_group_output_channels = o_c // basis_groups
 
     # Generate random centers and scalings.
+    # pylint: disable=too-many-function-args
     centers = create_random_centers(
         kernel_size,
         n_c * basis_groups,
@@ -231,7 +232,6 @@ def test_cbsconv_forward(i_c, o_c, basis_groups,
                      dilation=dilation, separable=True)
 
     assert torch.allclose(torch_output, output)
-
 
 
 @pytest.mark.parametrize('k', [2, 3, 4])
