@@ -68,7 +68,6 @@ class CardinalBSplineKernel:
 
     def __init__(self, c: np.ndarray, s: np.ndarray, k: np.ndarray):
         """Initialize the kernel by providing a set of splines."""
-        assert c.shape == s.shape == k.shape
         self._c = c
         self._s = s
         self._k = k
@@ -78,10 +77,6 @@ class CardinalBSplineKernel:
                                     s: np.ndarray,
                                     k: np.ndarray) -> np.ndarray:
         """Return the size of the smallest centered region."""
-        c = np.array(c)
-        s = np.array(s)
-        k = np.array(k)
-        assert c.shape == s.shape == k.shape
         bounds = np.array([
             np.abs(BSplineElement.create_cardinal(*p).support_bounds()).T
             for p in zip(c, s, k)
@@ -133,24 +128,20 @@ class CardinalBSplineKernel:
 
     @classmethod
     def create(cls, c: Iterable[Tuple[float, ...]],
-               s: Union[Iterable[Tuple[float, ...]], float] = 1.0,
-               k: Union[Iterable[Tuple[int, ...]],
-                        int] = 3) -> _TCardinalBSplineKernel:
-        """Generate a bspline kernel with randomly positioned centers."""
-        c = np.array(c)
-        c = c[:, None] if len(c.shape) == 1 else c
-        ncenters, ndims = c.shape
+               s: Union[Iterable[float], float] = 1.0,
+               k: Union[Iterable[int], int] = 2) -> _TCardinalBSplineKernel:
+        """Generate a bsplines kernel given centers, scalings and order."""
+        ncenters = len(c)
+        c = np.array(c).reshape(ncenters, -1)
 
         if not isinstance(s, Iterable):
             s = float(s)
-            s = (((s,) * ndims,) * ncenters)
+            s = ((s,) * ncenters)
         if not isinstance(k, Iterable):
-            k = (((k,) * ndims,) * ncenters)
+            k = ((k,) * ncenters)
 
-        s = np.array(s)
-        s = s[:, None] if len(s.shape) == 1 else s
-        k = np.array(k, dtype=int)
-        k = k[:, None] if len(k.shape) == 1 else k
+        s = np.array(s).reshape(ncenters)
+        k = np.array(k, dtype=int).reshape(ncenters)
 
         # Create the basis
         return cls(c, s, k)

@@ -65,14 +65,11 @@ class UnivariateCardinalBSpline(torch.autograd.Function):
         return None, c_grad, s_grad, None
 
 
-_KOptionalType = Union[int, Iterable[Tuple[int, ...]]]
-
 def cbspline(sampling_x: torch.Tensor, c: torch.Tensor, s: torch.Tensor,
-             k: _KOptionalType) -> List[torch.Tensor]:
+             k: int) -> List[torch.Tensor]:
     """Public interface to the functional to sample univariate bspines."""
-    return [UnivariateCardinalBSpline.apply(x, ci, si, ki)
-            for x, ci, si, ki in zip(sampling_x, c, s, k)]
-
+    return [UnivariateCardinalBSpline.apply(x, ci, s, k)
+            for x, ci in zip(sampling_x, c)]
 
 
 class SplineWeightsHashing():
@@ -98,17 +95,16 @@ def _cbsconv_params(input_, kernel_x, weights, c, s, k,
     Should return a list with each item:
     spline samples, input slice, weights and shifts.
     """
-    assert c.shape == s.shape
     n_c = weights.shape[-1]
     c = c.reshape(-1, c.shape[-1])
-    s = s.reshape(-1, s.shape[-1])
+    s = s.flatten()
 
     weights_map = defaultdict(lambda: ([], []))
     for i, (b_c, b_s) in enumerate(zip(c, s)):
         # For each dimension, crop the sampling values to fit
         # only the support of the spline.
         spline = BSplineElement.create_cardinal(
-            b_c.data.cpu().numpy(), b_s.data.cpu().numpy(), k)
+            b_c.data.cpu().numpy(), b_s.item(), k)
         bounds = spline.support_bounds().reshape(-1, 2)
 
         # Select only the part of the domain that intesects with the
@@ -301,7 +297,7 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     kernel_size.shape = kH, kW, kD, ...
     weights.shape = oC, iC, nc
     c.shape = basis_groups, nc, idim
-    s.shape = basis_groups, nc, idim
+    s.shape = basis_groups, nc
 
     There are two types of groups. The standard "group"
     as in pytorch is associated with the groups parameter.
@@ -314,16 +310,13 @@ def cbsconv(input_: torch.Tensor, kernel_size: Tuple[int, ...],
     bsplines in a single kernel and then perform the convolution.
     """
     assert input_.dtype == weights.dtype == c.dtype == s.dtype
-    assert c.shape == s.shape
+    assert c.shape[:-1] == s.shape
     spatial_shape = input_.shape[2:]
     spatial_dims = len(spatial_shape)
     input_channels = input_.shape[1]
     dims = len(kernel_size)
     assert dims == spatial_dims
     _, group_ic = weights.shape[0], weights.shape[1]
-
-    if not isinstance(k, Iterable):
-        k = ((k,) * spatial_dims)
 
     if not isinstance(stride, Tuple):
         stride = ((stride,) * spatial_dims)

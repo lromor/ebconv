@@ -89,7 +89,7 @@ class CBSConv(torch.nn.Module):
         self.centers = Parameter(torch.Tensor(basis_groups, nc, dims))
         if not adaptive_centers:
             self.centers.requires_grad = False
-        self.scalings = Parameter(torch.Tensor(basis_groups, nc, dims))
+        self.scalings = Parameter(torch.Tensor(basis_groups, nc))
         if not adaptive_scalings:
             self.scalings.requires_grad = False
 
@@ -114,8 +114,7 @@ class CBSConv(torch.nn.Module):
                     create_random_centers(self.kernel_size, self.nc)).float()
                 for _ in range(self.basis_groups)])
 
-        self.scalings.data = torch.ones(
-            self.basis_groups, self.nc, self.dims)
+        self.scalings.data = torch.ones_like(self.scalings)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
         if self.bias is not None:

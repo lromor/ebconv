@@ -85,7 +85,7 @@ _TBSplineElementBase = TypeVar('TBSplineElementBase',
 
 
 class BSplineElement():
-    """Implementation of a Univariate BSpline function."""
+    """Implementation of an isotropic BSpline function."""
 
     def __init__(self, ubsplines: Iterable[UnivariateBSplineElement]) -> None:
         """Initialize a bspline element.
@@ -105,8 +105,7 @@ class BSplineElement():
     @classmethod
     def create_cardinal(
             cls, c: Union[Tuple[float, ...], float] = 0.0,
-            s: Union[Tuple[float, ...], float] = 1.0,
-            k: Union[Tuple[int, ...], int] = 3) -> _TBSplineElementBase:
+            s: float = 1.0, k: int = 2) -> _TBSplineElementBase:
         """Return a cardinal bspline instance.
 
         Args:
@@ -119,13 +118,8 @@ class BSplineElement():
         """
         if not isinstance(c, Iterable):
             c = (c,)
-        if not isinstance(s, Iterable):
-            s = (s,)
-        if not isinstance(k, Iterable):
-            k = (k,)
 
-        knots = [uniform_knots(k_i) * s_i + c_i
-                 for c_i, s_i, k_i in zip(c, s, k)]
+        knots = [uniform_knots(k) * s + c_i for c_i in zip(c)]
         bspline = cls.from_knots(knots)
         return bspline
 

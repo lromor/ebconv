@@ -179,7 +179,7 @@ def test_cbsconv_forward(i_c, o_c, basis_groups,
         unique=False,
         integrally_spaced=True
     ).reshape(basis_groups, n_c, -1)
-    scalings = np.random.rand(*centers.shape) * 3 + 0.5
+    scalings = np.random.rand(basis_groups, n_c) * 3 + 0.5
     weights = np.random.rand(
         basis_groups, basis_group_output_channels, i_c, n_c)
 
@@ -253,7 +253,7 @@ def test_cbsconv_grad(shift, k):
     optimizer = torch.optim.Adam([center], lr=0.5)
     center = center.reshape(1, 1, 2)
     center.retain_grad()
-    scaling = torch.tensor((3.0, 3.0), requires_grad=False).reshape(1, 1, 2)
+    scaling = torch.tensor((3.0,), requires_grad=False).reshape(1, 1)
     weights = torch.ones(1, 1, 1, requires_grad=False)
     out = cbsconv(input_, kernel_size, weights, center, scaling, k)
     shifted_out = translate(out.data.clone(), shift)
