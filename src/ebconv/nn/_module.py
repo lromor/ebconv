@@ -115,6 +115,8 @@ class CBSConv(torch.nn.Module):
                 for _ in range(self.basis_groups)])
 
         self.scalings.data = torch.ones_like(self.scalings)
+        volume = reduce(lambda x, y: x * y, self.kernel_size)
+        self.scalings.data *= (volume / self.nc) ** (1 / self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))
         if self.bias is not None:
