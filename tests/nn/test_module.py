@@ -11,7 +11,7 @@ from ebconv.nn import CBSConv2d
 @pytest.mark.parametrize('adaptive_centers', [True, False])
 @pytest.mark.parametrize('adaptive_scalings', [True, False])
 @pytest.mark.parametrize('k', [-1, 0, 1, 2, 3])
-@pytest.mark.parametrize('nc', [None, (20)])
+@pytest.mark.parametrize('nc', [None, 20, (1, 2), (1, 2, 3)])
 @pytest.mark.parametrize('layout', ['grid', 'random'])
 def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
     """Check basic functionality of the module."""
@@ -32,15 +32,22 @@ def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
             module = create_module()
         return
 
-    if layout == 'grid' and nc is not None:
-        with pytest.warns(UserWarning):
-            module = create_module()
-    elif layout == 'random' and nc is None:
-        with pytest.raises(ValueError):
+    if layout == 'grid':
+        if nc is not None:
+            if not isinstance(nc, tuple):
+                with pytest.raises(TypeError):
+                    module = create_module()
+            elif len(nc) != 2:
+                with pytest.raises(ValueError):
+                    module = create_module()
+        return
+    if layout == 'random' and \
+       (nc is None or isinstance(nc, tuple)):
+        with pytest.raises(TypeError):
             module = create_module()
         return
-    else:
-        module = create_module()
+
+    module = create_module()
 
     # Check by default they are all of the same type (float 32)
     for param in module.parameters():
