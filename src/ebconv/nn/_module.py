@@ -25,7 +25,7 @@ class CBSConv(torch.nn.Module):
     def __init__(self, in_channels: int, out_channels: int,
                  kernel_size: Tuple[int, ...],
                  layout: LAYOUTS = 'random',
-                 nc: Union[Tuple[int, ...], int, None] = None,
+                 nc: Union[int, None] = None,
                  k: int = 2,
                  stride: Union[Tuple[int, ...], int] = 1,
                  padding: Union[Tuple[int, ...], int] = 0,
@@ -34,6 +34,7 @@ class CBSConv(torch.nn.Module):
                  adaptive_scalings: bool = True,
                  basis_groups: int = 1, bias: bool = False,
                  padding_mode: str = 'zeros',
+                 init_region: Union[Tuple[int, ...], None] = None,
                  separable: bool = False):
         """Pytorch module that implements bspline convolutions.
 
@@ -69,16 +70,19 @@ class CBSConv(torch.nn.Module):
                                 'number of centers to be specified '
                                 'as an integer.')
 
-        grid_size = kernel_size
+        init_region = kernel_size if init_region is None else init_region
+
+        if not isinstance(init_region, tuple):
+            raise TypeError('Init region should be a tuple.')
+
+        if len(init_region) != len(kernel_size):
+            raise ValueError('init_region and kernel_size should '
+                             'have the same length.')
         if layout == 'grid':
-            grid_size = kernel_size if nc is None else nc
-            if not isinstance(grid_size, tuple):
-                raise TypeError('If layout is grid, nc should be either '
-                                'None or a tuple.')
-            if len(grid_size) != len(kernel_size):
-                raise ValueError('nc tuple and kernel_size should '
-                                 'have the same length')
-            nc = reduce(lambda x, y: x * y, grid_size)
+            if nc is not None:
+                warnings.warn('the parameter number of centers(nc) when'
+                              ' layout is grid is ignored')
+            nc = reduce(lambda x, y: x * y, init_region)
 
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -92,7 +96,7 @@ class CBSConv(torch.nn.Module):
         self.adaptive_centers = adaptive_centers
         self.adaptive_scalings = adaptive_scalings
         self.layout = layout
-        self.grid_size = grid_size
+        self.init_region = init_region
         self.basis_groups = basis_groups
         self.padding_mode = padding_mode
         self.separable = separable
@@ -119,16 +123,16 @@ class CBSConv(torch.nn.Module):
         if self.layout == 'grid':
             self.centers.data = torch.stack([
                 torch.from_numpy(
-                    create_uniform_grid(self.grid_size)).float()
+                    create_uniform_grid(self.init_region)).float()
                 for _ in range(self.basis_groups)])
         else:
             self.centers.data = torch.stack([
                 torch.from_numpy(
-                    create_random_centers(self.kernel_size, self.nc)).float()
+                    create_random_centers(self.init_region, self.nc)).float()
                 for _ in range(self.basis_groups)])
 
         self.scalings.data = torch.ones_like(self.scalings)
-        volume = reduce(lambda x, y: x * y, self.grid_size)
+        volume = reduce(lambda x, y: x * y, self.init_region)
         self.scalings.data *= (volume / self.nc) ** (1 / self.dims)
 
         init.kaiming_uniform_(self.weights, a=math.sqrt(5))

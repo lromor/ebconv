@@ -11,20 +11,22 @@ from ebconv.nn import CBSConv2d
 @pytest.mark.parametrize('adaptive_centers', [True, False])
 @pytest.mark.parametrize('adaptive_scalings', [True, False])
 @pytest.mark.parametrize('k', [-1, 0, 1, 2, 3])
-@pytest.mark.parametrize('nc', [None, 20, (1, 2), (1, 2, 3)])
+@pytest.mark.parametrize('nc', [None, 20])
+@pytest.mark.parametrize('init_region', [None, 20, (1, 2), (1, 2, 3), "te", [3, 2]])
 @pytest.mark.parametrize('layout', ['grid', 'random'])
-def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
+def test_cbconv_module(layout, init_region, nc, k, adaptive_centers, adaptive_scalings):
     """Check basic functionality of the module."""
     input_channels = 3
     output_channels = 4
-
+    kernel_size = (20, 20)
     input_ = torch.rand(1, input_channels, 256, 256)
 
     def create_module():
         return CBSConv(
-            input_channels, output_channels, (20, 20),
+            input_channels, output_channels, kernel_size,
             layout=layout, nc=nc, k=k,
             adaptive_centers=adaptive_centers,
+            init_region=init_region,
             adaptive_scalings=adaptive_scalings)
 
     if k < 0:
@@ -32,21 +34,24 @@ def test_cbconv_module(layout, nc, k, adaptive_centers, adaptive_scalings):
             module = create_module()
         return
 
-    if layout == 'grid':
-        if nc is not None:
-            if not isinstance(nc, tuple):
-                with pytest.raises(TypeError):
-                    module = create_module()
-            elif len(nc) != 2:
-                with pytest.raises(ValueError):
-                    module = create_module()
-        return
-    if layout == 'random' and \
-       (nc is None or isinstance(nc, tuple)):
+    if layout == 'random' and not isinstance(nc, int):
         with pytest.raises(TypeError):
             module = create_module()
         return
 
+    if init_region is not None:
+        if not isinstance(init_region, tuple):
+            with pytest.raises(TypeError):
+                module = create_module()
+        elif len(init_region) != len(kernel_size):
+            with pytest.raises(ValueError):
+                module = create_module()
+        return
+
+    if layout == 'grid' and nc is not None:
+        with pytest.warns(UserWarning):
+            module = create_module()
+        return
     module = create_module()
 
     # Check by default they are all of the same type (float 32)
